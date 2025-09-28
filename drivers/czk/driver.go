@@ -9,6 +9,8 @@ import (
 	"log"
 	"mime/multipart"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -171,10 +173,10 @@ func (d *CZK) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*m
 	}
 
 	// 根据API文档，下载链接接口需要添加Authorization认证头部
-	url := fmt.Sprintf("https://pan.szczk.top/czkapi/get_download_url?file_id=%s", file.GetID())
+	urlStr := fmt.Sprintf("https://pan.szczk.top/czkapi/get_download_url?file_id=%s", file.GetID())
 	resp, err := d.client.R().
 		SetHeader("Authorization", "Bearer "+d.AccessToken).
-		Get(url)
+		Get(urlStr)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to send get download link request: %w", err)
@@ -195,12 +197,12 @@ func (d *CZK) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*m
 	log.Printf("CZK Link response: %+v", downloadResp)
 
 	// 检查响应中是否有错误信息
-	if status, ok := downloadResp["status"].(float64); ok && int64(status) != 200 {
+	if code, ok := downloadResp["code"].(float64); ok && int64(code) != 200 {
 		message := "unknown error"
 		if msg, ok := downloadResp["message"].(string); ok {
 			message = msg
 		}
-		return nil, fmt.Errorf("get download link API error: status=%d, message=%s", int64(status), message)
+		return nil, fmt.Errorf("get download link API error: code=%d, message=%s", int64(code), message)
 	}
 
 	// 从响应中提取下载链接
@@ -220,9 +222,46 @@ func (d *CZK) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*m
 		return nil, fmt.Errorf("failed to get download link from response")
 	}
 
-	return &model.Link{
+	// 创建一个带有重试机制的链接
+	link := &model.Link{
 		URL: downloadLink,
-	}, nil
+		Header: http.Header{
+			"User-Agent": []string{"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"},
+		},
+	}
+
+	// 如果是S3兼容链接，需要添加认证信息
+	if d.isS3CompatibleURL(downloadLink) {
+		// 解析URL中的查询参数
+		parsedURL, err := url.Parse(downloadLink)
+		if err != nil {
+			log.Printf("CZK Link: failed to parse S3 URL: %v", err)
+		} else {
+			// 将查询参数添加到请求头中
+			queryParams := parsedURL.Query()
+			for key, values := range queryParams {
+				if strings.HasPrefix(key, "X-Amz-") {
+					for _, value := range values {
+						link.Header.Add(key, value)
+					}
+				}
+			}
+		}
+	}
+
+	return link, nil
+}
+
+// isS3CompatibleURL 检查URL是否为S3兼容链接
+func (d *CZK) isS3CompatibleURL(rawURL string) bool {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+
+	// 检查是否包含S3特征的域名
+	host := parsedURL.Host
+	return strings.Contains(host, ".amazonaws.com") || strings.Contains(host, ".aliyuncs.com")
 }
 
 func (d *CZK) authenticate() error {
