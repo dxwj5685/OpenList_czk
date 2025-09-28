@@ -9,8 +9,6 @@ import (
 	"log"
 	"mime/multipart"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -230,31 +228,7 @@ func (d *CZK) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*m
 		},
 	}
 
-	// 如果是S3兼容链接，保留原URL参数，不做迁移
-	if d.isS3CompatibleURL(downloadLink) {
-		// 仅解析URL用于日志（不修改参数）
-		parsedURL, err := url.Parse(downloadLink)
-		if err != nil {
-			log.Printf("CZK Link: failed to parse S3 URL: %v", err)
-		} else {
-			log.Printf("CZK Link: parsed S3 URL: %s", parsedURL.String())
-		}
-		// 预签名URL无需额外Authorization头，删除
-		link.Header.Del("Authorization")
-		// 不设置Referer头部，某些S3存储不接受此头部
-	}
-
 	return link, nil
-}
-
-// isS3CompatibleURL 检查URL是否为S3兼容链接
-func (d *CZK) isS3CompatibleURL(rawURL string) bool {
-	// 检查URL是否包含S3相关的特征
-	return strings.Contains(rawURL, "X-Amz-") ||
-		strings.Contains(rawURL, "s3") ||
-		strings.Contains(rawURL, "amazonaws.com") ||
-		strings.Contains(rawURL, "aliyuncs.com") ||
-		strings.Contains(rawURL, "downself.1785677.xyz") // 添加特定的存储域名
 }
 
 func (d *CZK) authenticate() error {
