@@ -826,8 +826,7 @@ func (d *CZK) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 	completePayload := &bytes.Buffer{}
 	completeWriter := multipart.NewWriter(completePayload)
 	_ = completeWriter.WriteField("hash", md5Hash)
-	// 根据项目内存信息，filename字段实际表示文件大小（单位为字节）
-	_ = completeWriter.WriteField("filename", fmt.Sprintf("%d", file.GetSize()))
+	_ = completeWriter.WriteField("filename", file.GetName())
 	_ = completeWriter.WriteField("filesize", fmt.Sprintf("%d", file.GetSize()))
 	_ = completeWriter.WriteField("csrf_token", csrfToken)
 	_ = completeWriter.WriteField("file_key", fileKey)
