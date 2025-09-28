@@ -222,26 +222,41 @@ func (d *CZK) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*m
 		return nil, fmt.Errorf("failed to get download link from response")
 	}
 
-	// 创建一个带有重试机制的链接
+	// 创建链接对象
 	link := &model.Link{
 		URL: downloadLink,
-		Header: http.Header{
-			"User-Agent": []string{"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"},
-		},
 	}
 
-	// 如果是S3兼容链接，保留原URL参数，不做迁移
+	// 如果是S3兼容链接，需要特殊处理
 	if d.isS3CompatibleURL(downloadLink) {
-		// 仅解析URL用于日志（不修改参数）
+		// 解析URL参数
 		parsedURL, err := url.Parse(downloadLink)
 		if err != nil {
 			log.Printf("CZK Link: failed to parse S3 URL: %v", err)
 		} else {
-			log.Printf("CZK Link: parsed S3 URL: %s", parsedURL.String())
+			// 将查询参数转换为请求头
+			headers := make(http.Header)
+			queryParams := parsedURL.Query()
+			for key, values := range queryParams {
+				if strings.HasPrefix(strings.ToLower(key), "x-amz-") {
+					for _, value := range values {
+						headers.Add(key, value)
+					}
+				}
+			}
+
+			// 设置User-Agent
+			headers.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+
+			link.Header = headers
+
+			// 记录日志
+			log.Printf("CZK Link: processed S3 URL with %d auth headers", len(headers))
 		}
-		// 预签名URL无需额外Authorization头，删除
-		link.Header.Del("Authorization")
-		// 不设置Referer头部，某些S3存储不接受此头部
+	} else {
+		// 对于非S3链接，设置标准的User-Agent
+		link.Header = make(http.Header)
+		link.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
 	}
 
 	return link, nil
@@ -487,7 +502,7 @@ func (d *CZK) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, er
 	}
 
 	// 根据项目信息更新URL
-	url := "https://pan.szczk.top/czkapi/move_item"
+	url := "https://pan.szczk.top/api/move_folder"
 
 	// 创建表单数据，根据API示例使用正确的参数名
 	payload := &bytes.Buffer{}
@@ -517,25 +532,7 @@ func (d *CZK) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, er
 		return nil, fmt.Errorf("failed to send move request: %w", err)
 	}
 
-	if resp.StatusCode() == http.StatusUnauthorized {
-		// 尝试刷新令牌并重试
-		err := d.refreshToken()
-		if err != nil {
-			return nil, fmt.Errorf("failed to refresh token: %w", err)
-		}
-		// 重新发起请求
-		resp, err = d.client.R().
-			SetHeader("Authorization", "Bearer "+d.AccessToken).
-			SetHeader("Content-Type", writer.FormDataContentType()).
-			SetBody(payload.Bytes()).
-			Post(url)
-		if err != nil {
-			return nil, fmt.Errorf("failed to send move request after token refresh: %w", err)
-		}
-		if resp.StatusCode() != http.StatusOK {
-			return nil, fmt.Errorf("failed to move item with status %d: %s", resp.StatusCode(), resp.String())
-		}
-	} else if resp.StatusCode() != http.StatusOK {
+	if resp.StatusCode() != http.StatusOK {
 		return nil, fmt.Errorf("failed to move item with status %d: %s", resp.StatusCode(), resp.String())
 	}
 
