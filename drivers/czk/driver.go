@@ -254,14 +254,11 @@ func (d *CZK) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*m
 
 // isS3CompatibleURL 检查URL是否为S3兼容链接
 func (d *CZK) isS3CompatibleURL(rawURL string) bool {
-	parsedURL, err := url.Parse(rawURL)
-	if err != nil {
-		return false
-	}
-
-	// 检查是否包含S3特征的域名
-	host := parsedURL.Host
-	return strings.Contains(host, ".amazonaws.com") || strings.Contains(host, ".aliyuncs.com")
+	// 检查URL是否包含S3相关的特征
+	return strings.Contains(rawURL, "X-Amz-") ||
+		strings.Contains(rawURL, "s3") ||
+		strings.Contains(rawURL, "amazonaws.com") ||
+		strings.Contains(rawURL, "aliyuncs.com")
 }
 
 func (d *CZK) authenticate() error {
