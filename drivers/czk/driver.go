@@ -487,7 +487,7 @@ func (d *CZK) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, er
 	}
 
 	// 根据项目信息更新URL
-	url := "https://pan.szczk.top/api/move_folder"
+	url := "https://pan.szczk.top/czkapi/move_item"
 
 	// 创建表单数据，根据API示例使用正确的参数名
 	payload := &bytes.Buffer{}
@@ -517,7 +517,25 @@ func (d *CZK) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, er
 		return nil, fmt.Errorf("failed to send move request: %w", err)
 	}
 
-	if resp.StatusCode() != http.StatusOK {
+	if resp.StatusCode() == http.StatusUnauthorized {
+		// 尝试刷新令牌并重试
+		err := d.refreshToken()
+		if err != nil {
+			return nil, fmt.Errorf("failed to refresh token: %w", err)
+		}
+		// 重新发起请求
+		resp, err = d.client.R().
+			SetHeader("Authorization", "Bearer "+d.AccessToken).
+			SetHeader("Content-Type", writer.FormDataContentType()).
+			SetBody(payload.Bytes()).
+			Post(url)
+		if err != nil {
+			return nil, fmt.Errorf("failed to send move request after token refresh: %w", err)
+		}
+		if resp.StatusCode() != http.StatusOK {
+			return nil, fmt.Errorf("failed to move item with status %d: %s", resp.StatusCode(), resp.String())
+		}
+	} else if resp.StatusCode() != http.StatusOK {
 		return nil, fmt.Errorf("failed to move item with status %d: %s", resp.StatusCode(), resp.String())
 	}
 
