@@ -230,29 +230,18 @@ func (d *CZK) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*m
 		},
 	}
 
-	// 如果是S3兼容链接，需要添加认证信息
+	// 如果是S3兼容链接，保留原URL参数，不做迁移
 	if d.isS3CompatibleURL(downloadLink) {
-		// 解析URL中的查询参数
+		// 仅解析URL用于日志（不修改参数）
 		parsedURL, err := url.Parse(downloadLink)
 		if err != nil {
 			log.Printf("CZK Link: failed to parse S3 URL: %v", err)
 		} else {
-			// 将查询参数添加到请求头中
-			queryParams := parsedURL.Query()
-			for key, values := range queryParams {
-				if strings.HasPrefix(key, "X-Amz-") {
-					for _, value := range values {
-						link.Header.Add(key, value)
-					}
-				}
-			}
+			log.Printf("CZK Link: parsed S3 URL: %s", parsedURL.String())
 		}
-
-		// 对于S3链接，移除Authorization头，因为预签名URL已经包含认证信息
+		// 预签名URL无需额外Authorization头，删除
 		link.Header.Del("Authorization")
-
-		// 添加 Referer 头部，某些情况下可能需要
-		link.Header.Set("Referer", "https://pan.szczk.top/")
+		// 不设置Referer头部，某些S3存储不接受此头部
 	}
 
 	return link, nil
