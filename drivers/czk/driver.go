@@ -39,8 +39,8 @@ func (d *CZK) GetAddition() driver.Additional {
 func (d *CZK) Init(ctx context.Context) error {
 	d.client = resty.New()
 
-	// 设置全局User-Agent
-	d.client.SetHeader("User-Agent", "openlist")
+	// 设置全局User-Agent为Chrome浏览器标识
+	d.client.SetHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
 
 	// 获取访问令牌
 	if err := d.authenticate(); err != nil {
@@ -454,7 +454,8 @@ func (d *CZK) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, er
 		return nil, fmt.Errorf("failed to refresh token: %w", err)
 	}
 
-	url := "https://pan.szczk.top/czkapi/move_item"
+	// 根据项目信息更新URL
+	url := "https://pan.szczk.top/api/move_folder"
 
 	// 创建表单数据，根据API示例使用正确的参数名
 	payload := &bytes.Buffer{}
@@ -751,12 +752,35 @@ func (d *CZK) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 		return nil, fmt.Errorf("init upload API error: code=%d, message=%s", int64(code), message)
 	}
 
-	// 从初始化响应中提取需要的参数
-	csrfToken := ""
-	fileKey := ""
-	uploadURL := ""
-
+	// 检查是否为秒传成功的情况（status: instant）
 	if data, ok := initResp["data"].(map[string]interface{}); ok {
+		if status, ok := data["status"].(string); ok && status == "instant" {
+			// 秒传成功，直接提取file_id并返回文件对象
+			fileID := ""
+			if id, ok := data["file_id"].(float64); ok {
+				fileID = fmt.Sprintf("%.0f", id)
+			}
+
+			log.Printf("CZK Put: instant upload successful, file_id=%s", fileID)
+			// 恢复默认超时时间
+			d.client.SetTimeout(30 * time.Second)
+
+			// 返回新创建的文件对象
+			newObj := &model.Object{
+				ID:       fileID,
+				Name:     file.GetName(),
+				Size:     file.GetSize(),
+				Modified: time.Now(),
+				IsFolder: false,
+			}
+			return newObj, nil
+		}
+
+		// 从初始化响应中提取需要的参数（非秒传情况）
+		csrfToken := ""
+		fileKey := ""
+		uploadURL := ""
+
 		// 根据文档，提取必需的字段
 		if token, ok := data["csrf_token"].(string); ok {
 			csrfToken = token
@@ -768,135 +792,138 @@ func (d *CZK) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 			uploadURL = url
 		}
 		log.Printf("CZK Put extracted from init response: csrf_token=%s, file_key=%s, upload_url=%s", csrfToken, fileKey, uploadURL)
-	} else {
-		log.Printf("CZK Put failed to parse data field from init response: %+v", initResp)
-	}
 
-	// 检查必要参数是否存在
-	if csrfToken == "" || fileKey == "" || uploadURL == "" {
-		// 恢复默认超时时间
-		d.client.SetTimeout(30 * time.Second)
-		return nil, fmt.Errorf("missing required parameters from init upload response: csrf_token=%s, file_key=%s, upload_url=%s", csrfToken, fileKey, uploadURL)
-	}
-
-	// 上传文件到指定的URL
-	log.Printf("CZK Put uploading file to: %s", uploadURL)
-
-	// 重置文件流到开始位置
-	if seeker, ok := tempFile.(io.Seeker); ok {
-		if _, err := seeker.Seek(0, io.SeekStart); err != nil {
+		// 检查必要参数是否存在
+		if csrfToken == "" || fileKey == "" || uploadURL == "" {
 			// 恢复默认超时时间
 			d.client.SetTimeout(30 * time.Second)
-			return nil, fmt.Errorf("failed to seek file: %w", err)
+			return nil, fmt.Errorf("missing required parameters from init upload response: csrf_token=%s, file_key=%s, upload_url=%s", csrfToken, fileKey, uploadURL)
 		}
-	}
 
-	// 上传文件到指定的URL，使用PUT方法并确保包含Content-Length头部
-	// 读取整个文件内容到内存中以确保Content-Length正确设置
-	fileContent, err := io.ReadAll(tempFile)
-	if err != nil {
+		// 上传文件到指定的URL
+		log.Printf("CZK Put uploading file to: %s", uploadURL)
+
+		// 重置文件流到开始位置
+		if seeker, ok := tempFile.(io.Seeker); ok {
+			if _, err := seeker.Seek(0, io.SeekStart); err != nil {
+				// 恢复默认超时时间
+				d.client.SetTimeout(30 * time.Second)
+				return nil, fmt.Errorf("failed to seek file: %w", err)
+			}
+		}
+
+		// 上传文件到指定的URL，使用PUT方法并确保包含Content-Length头部
+		// 读取整个文件内容到内存中以确保Content-Length正确设置
+		fileContent, err := io.ReadAll(tempFile)
+		if err != nil {
+			// 恢复默认超时时间
+			d.client.SetTimeout(30 * time.Second)
+			return nil, fmt.Errorf("failed to read file content: %w", err)
+		}
+
+		uploadResp, err := d.client.R().
+			SetHeader("Content-Length", fmt.Sprintf("%d", len(fileContent))).
+			SetBody(fileContent).
+			Put(uploadURL)
+
+		if err != nil {
+			// 恢复默认超时时间
+			d.client.SetTimeout(30 * time.Second)
+			return nil, fmt.Errorf("failed to upload file to storage: %w", err)
+		}
+
+		if uploadResp.StatusCode() != http.StatusOK {
+			// 恢复默认超时时间
+			d.client.SetTimeout(30 * time.Second)
+			return nil, fmt.Errorf("failed to upload file to storage with status %d: %s", uploadResp.StatusCode(), uploadResp.String())
+		}
+
+		log.Printf("CZK Put file uploaded to storage successfully")
+
+		// 完成上传 - 使用原始URL
+		completeURL := "https://pan.szczk.top/czkapi/ok_upload"
+
+		// 创建完成上传的表单数据，根据文档要求的参数
+		completePayload := &bytes.Buffer{}
+		completeWriter := multipart.NewWriter(completePayload)
+		_ = completeWriter.WriteField("hash", md5Hash)
+		_ = completeWriter.WriteField("filename", file.GetName())
+		_ = completeWriter.WriteField("filesize", fmt.Sprintf("%d", file.GetSize()))
+		_ = completeWriter.WriteField("csrf_token", csrfToken)
+		_ = completeWriter.WriteField("file_key", fileKey)
+		if dstDir.GetID() != "" {
+			_ = completeWriter.WriteField("folder", dstDir.GetID())
+		}
+		err = completeWriter.Close()
+		if err != nil {
+			// 恢复默认超时时间
+			d.client.SetTimeout(30 * time.Second)
+			return nil, fmt.Errorf("failed to create complete upload form: %w", err)
+		}
+
+		log.Printf("CZK Put complete upload request - URL: %s, filename: %s, filesize: %d, hash: %s, csrf_token: %s, file_key: %s, folder: %s",
+			completeURL, file.GetName(), file.GetSize(), md5Hash, csrfToken, fileKey, dstDir.GetID())
+
+		completeResp, err := d.client.R().
+			SetHeader("Authorization", "Bearer "+d.AccessToken).
+			SetHeader("Content-Type", completeWriter.FormDataContentType()).
+			SetBody(completePayload.Bytes()).
+			Post(completeURL)
+
 		// 恢复默认超时时间
 		d.client.SetTimeout(30 * time.Second)
-		return nil, fmt.Errorf("failed to read file content: %w", err)
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to send complete upload request: %w", err)
+		}
+
+		if completeResp.StatusCode() != http.StatusOK {
+			return nil, fmt.Errorf("failed to complete upload with status %d: %s", completeResp.StatusCode(), completeResp.String())
+		}
+
+		// 解析完成上传的响应
+		var completeRespData map[string]interface{}
+		if err := json.Unmarshal(completeResp.Body(), &completeRespData); err != nil {
+			return nil, fmt.Errorf("failed to parse upload complete response: %w", err)
+		}
+
+		// 记录响应内容用于调试
+		log.Printf("CZK Put complete upload response: %+v", completeRespData)
+
+		// 检查响应中是否有错误信息，根据文档使用code字段
+		if code, ok := completeRespData["code"].(float64); ok && int64(code) != 200 {
+			message := "unknown error"
+			if msg, ok := completeRespData["message"].(string); ok {
+				// 根据文档，使用message字段
+				message = msg
+			}
+			return nil, fmt.Errorf("complete upload API error: code=%d, message=%s", int64(code), message)
+		}
+
+		// 从响应中提取文件ID
+		fileID := ""
+		if data, ok := completeRespData["data"].(map[string]interface{}); ok {
+			if id, ok := data["file_id"].(float64); ok {
+				fileID = fmt.Sprintf("%.0f", id)
+			}
+		}
+
+		// 返回新创建的文件对象
+		newObj := &model.Object{
+			ID:       fileID,
+			Name:     file.GetName(),
+			Size:     file.GetSize(),
+			Modified: time.Now(),
+			IsFolder: false,
+		}
+
+		return newObj, nil
 	}
 
-	uploadResp, err := d.client.R().
-		SetHeader("Content-Length", fmt.Sprintf("%d", len(fileContent))).
-		SetBody(fileContent).
-		Put(uploadURL)
-
-	if err != nil {
-		// 恢复默认超时时间
-		d.client.SetTimeout(30 * time.Second)
-		return nil, fmt.Errorf("failed to upload file to storage: %w", err)
-	}
-
-	if uploadResp.StatusCode() != http.StatusOK {
-		// 恢复默认超时时间
-		d.client.SetTimeout(30 * time.Second)
-		return nil, fmt.Errorf("failed to upload file to storage with status %d: %s", uploadResp.StatusCode(), uploadResp.String())
-	}
-
-	log.Printf("CZK Put file uploaded to storage successfully")
-
-	// 完成上传 - 使用原始URL
-	completeURL := "https://pan.szczk.top/czkapi/ok_upload"
-
-	// 创建完成上传的表单数据，根据文档要求的参数
-	completePayload := &bytes.Buffer{}
-	completeWriter := multipart.NewWriter(completePayload)
-	_ = completeWriter.WriteField("hash", md5Hash)
-	_ = completeWriter.WriteField("filename", file.GetName())
-	_ = completeWriter.WriteField("filesize", fmt.Sprintf("%d", file.GetSize()))
-	_ = completeWriter.WriteField("csrf_token", csrfToken)
-	_ = completeWriter.WriteField("file_key", fileKey)
-	if dstDir.GetID() != "" {
-		_ = completeWriter.WriteField("folder", dstDir.GetID())
-	}
-	err = completeWriter.Close()
-	if err != nil {
-		// 恢复默认超时时间
-		d.client.SetTimeout(30 * time.Second)
-		return nil, fmt.Errorf("failed to create complete upload form: %w", err)
-	}
-
-	log.Printf("CZK Put complete upload request - URL: %s, filename: %s, filesize: %d, hash: %s, csrf_token: %s, file_key: %s, folder: %s",
-		completeURL, file.GetName(), file.GetSize(), md5Hash, csrfToken, fileKey, dstDir.GetID())
-
-	completeResp, err := d.client.R().
-		SetHeader("Authorization", "Bearer "+d.AccessToken).
-		SetHeader("Content-Type", completeWriter.FormDataContentType()).
-		SetBody(completePayload.Bytes()).
-		Post(completeURL)
-
+	log.Printf("CZK Put failed to parse data field from init response: %+v", initResp)
 	// 恢复默认超时时间
 	d.client.SetTimeout(30 * time.Second)
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to send complete upload request: %w", err)
-	}
-
-	if completeResp.StatusCode() != http.StatusOK {
-		return nil, fmt.Errorf("failed to complete upload with status %d: %s", completeResp.StatusCode(), completeResp.String())
-	}
-
-	// 解析完成上传的响应
-	var completeRespData map[string]interface{}
-	if err := json.Unmarshal(completeResp.Body(), &completeRespData); err != nil {
-		return nil, fmt.Errorf("failed to parse upload complete response: %w", err)
-	}
-
-	// 记录响应内容用于调试
-	log.Printf("CZK Put complete upload response: %+v", completeRespData)
-
-	// 检查响应中是否有错误信息，根据文档使用code字段
-	if code, ok := completeRespData["code"].(float64); ok && int64(code) != 200 {
-		message := "unknown error"
-		if msg, ok := completeRespData["message"].(string); ok {
-			// 根据文档，使用message字段
-			message = msg
-		}
-		return nil, fmt.Errorf("complete upload API error: code=%d, message=%s", int64(code), message)
-	}
-
-	// 从响应中提取文件ID
-	fileID := ""
-	if data, ok := completeRespData["data"].(map[string]interface{}); ok {
-		if id, ok := data["file_id"].(float64); ok {
-			fileID = fmt.Sprintf("%.0f", id)
-		}
-	}
-
-	// 返回新创建的文件对象
-	newObj := &model.Object{
-		ID:       fileID,
-		Name:     file.GetName(),
-		Size:     file.GetSize(),
-		Modified: time.Now(),
-		IsFolder: false,
-	}
-
-	return newObj, nil
+	return nil, fmt.Errorf("failed to parse init upload response data field")
 }
 
 func (d *CZK) GetArchiveMeta(ctx context.Context, obj model.Obj, args model.ArchiveArgs) (model.ArchiveMeta, error) {
