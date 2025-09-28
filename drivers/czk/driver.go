@@ -220,7 +220,14 @@ func (d *CZK) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*m
 		return nil, fmt.Errorf("failed to get download link from response")
 	}
 
-	// 创建一个带有重试机制的链接
+	// 如果是重定向请求，则直接返回链接
+	if args.Redirect {
+		return &model.Link{
+			URL: downloadLink,
+		}, nil
+	}
+
+	// 创建一个带有认证信息的链接
 	link := &model.Link{
 		URL: downloadLink,
 		Header: http.Header{
