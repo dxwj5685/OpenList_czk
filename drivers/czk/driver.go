@@ -614,7 +614,25 @@ func (d *CZK) Rename(ctx context.Context, srcObj model.Obj, newName string) (mod
 		return nil, fmt.Errorf("failed to send rename request: %w", err)
 	}
 
-	if resp.StatusCode() != http.StatusOK {
+	if resp.StatusCode() == http.StatusUnauthorized {
+		// 尝试刷新令牌并重试
+		err := d.refreshToken()
+		if err != nil {
+			return nil, fmt.Errorf("failed to refresh token: %w", err)
+		}
+		// 重新发起请求
+		resp, err = d.client.R().
+			SetHeader("Authorization", "Bearer "+d.AccessToken).
+			SetHeader("Content-Type", writer.FormDataContentType()).
+			SetBody(payload.Bytes()).
+			Post(url)
+		if err != nil {
+			return nil, fmt.Errorf("failed to send rename request after token refresh: %w", err)
+		}
+		if resp.StatusCode() != http.StatusOK {
+			return nil, fmt.Errorf("failed to rename item with status %d: %s", resp.StatusCode(), resp.String())
+		}
+	} else if resp.StatusCode() != http.StatusOK {
 		return nil, fmt.Errorf("failed to rename item with status %d: %s", resp.StatusCode(), resp.String())
 	}
 
@@ -679,7 +697,25 @@ func (d *CZK) Remove(ctx context.Context, obj model.Obj) error {
 		return fmt.Errorf("failed to send delete request: %w", err)
 	}
 
-	if resp.StatusCode() != http.StatusOK {
+	if resp.StatusCode() == http.StatusUnauthorized {
+		// 尝试刷新令牌并重试
+		err := d.refreshToken()
+		if err != nil {
+			return fmt.Errorf("failed to refresh token: %w", err)
+		}
+		// 重新发起请求
+		resp, err = d.client.R().
+			SetHeader("Authorization", "Bearer "+d.AccessToken).
+			SetHeader("Content-Type", writer.FormDataContentType()).
+			SetBody(payload.Bytes()).
+			Post(url)
+		if err != nil {
+			return fmt.Errorf("failed to send delete request after token refresh: %w", err)
+		}
+		if resp.StatusCode() != http.StatusOK {
+			return fmt.Errorf("failed to delete item with status %d: %s", resp.StatusCode(), resp.String())
+		}
+	} else if resp.StatusCode() != http.StatusOK {
 		return fmt.Errorf("failed to delete item with status %d: %s", resp.StatusCode(), resp.String())
 	}
 
@@ -755,7 +791,31 @@ func (d *CZK) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 		return nil, fmt.Errorf("failed to send init upload request: %w", err)
 	}
 
-	if resp.StatusCode() != http.StatusOK {
+	if resp.StatusCode() == http.StatusUnauthorized {
+		// 尝试刷新令牌并重试
+		err := d.refreshToken()
+		if err != nil {
+			// 恢复默认超时时间
+			d.client.SetTimeout(30 * time.Second)
+			return nil, fmt.Errorf("failed to refresh token: %w", err)
+		}
+		// 重新发起请求
+		resp, err = d.client.R().
+			SetHeader("Authorization", "Bearer "+d.AccessToken).
+			SetHeader("Content-Type", writer.FormDataContentType()).
+			SetBody(payload.Bytes()).
+			Post(initURL)
+		if err != nil {
+			// 恢复默认超时时间
+			d.client.SetTimeout(30 * time.Second)
+			return nil, fmt.Errorf("failed to send init upload request after token refresh: %w", err)
+		}
+		if resp.StatusCode() != http.StatusOK {
+			// 恢复默认超时时间
+			d.client.SetTimeout(30 * time.Second)
+			return nil, fmt.Errorf("failed to initialize upload with status %d: %s", resp.StatusCode(), resp.String())
+		}
+	} else if resp.StatusCode() != http.StatusOK {
 		// 恢复默认超时时间
 		d.client.SetTimeout(30 * time.Second)
 		return nil, fmt.Errorf("failed to initialize upload with status %d: %s", resp.StatusCode(), resp.String())
@@ -864,7 +924,30 @@ func (d *CZK) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 			return nil, fmt.Errorf("failed to upload file to storage: %w", err)
 		}
 
-		if uploadResp.StatusCode() != http.StatusOK {
+		if uploadResp.StatusCode() == http.StatusUnauthorized {
+			// 尝试刷新令牌并重试
+			err := d.refreshToken()
+			if err != nil {
+				// 恢复默认超时时间
+				d.client.SetTimeout(30 * time.Second)
+				return nil, fmt.Errorf("failed to refresh token: %w", err)
+			}
+			// 重新发起请求
+			uploadResp, err = d.client.R().
+				SetHeader("Content-Length", fmt.Sprintf("%d", len(fileContent))).
+				SetBody(fileContent).
+				Put(uploadURL)
+			if err != nil {
+				// 恢复默认超时时间
+				d.client.SetTimeout(30 * time.Second)
+				return nil, fmt.Errorf("failed to upload file to storage after token refresh: %w", err)
+			}
+			if uploadResp.StatusCode() != http.StatusOK {
+				// 恢复默认超时时间
+				d.client.SetTimeout(30 * time.Second)
+				return nil, fmt.Errorf("failed to upload file to storage with status %d: %s", uploadResp.StatusCode(), uploadResp.String())
+			}
+		} else if uploadResp.StatusCode() != http.StatusOK {
 			// 恢复默认超时时间
 			d.client.SetTimeout(30 * time.Second)
 			return nil, fmt.Errorf("failed to upload file to storage with status %d: %s", uploadResp.StatusCode(), uploadResp.String())
@@ -909,7 +992,33 @@ func (d *CZK) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 			return nil, fmt.Errorf("failed to send complete upload request: %w", err)
 		}
 
-		if completeResp.StatusCode() != http.StatusOK {
+		if completeResp.StatusCode() == http.StatusUnauthorized {
+			// 尝试刷新令牌并重试
+			err := d.refreshToken()
+			if err != nil {
+				// 恢复默认超时时间
+				d.client.SetTimeout(30 * time.Second)
+				return nil, fmt.Errorf("failed to refresh token: %w", err)
+			}
+			// 重新发起请求
+			completeResp, err = d.client.R().
+				SetHeader("Authorization", "Bearer "+d.AccessToken).
+				SetHeader("Content-Type", completeWriter.FormDataContentType()).
+				SetBody(completePayload.Bytes()).
+				Post(completeURL)
+			if err != nil {
+				// 恢复默认超时时间
+				d.client.SetTimeout(30 * time.Second)
+				return nil, fmt.Errorf("failed to send complete upload request after token refresh: %w", err)
+			}
+			if completeResp.StatusCode() != http.StatusOK {
+				// 恢复默认超时时间
+				d.client.SetTimeout(30 * time.Second)
+				return nil, fmt.Errorf("failed to complete upload with status %d: %s", completeResp.StatusCode(), completeResp.String())
+			}
+		} else if completeResp.StatusCode() != http.StatusOK {
+			// 恢复默认超时时间
+			d.client.SetTimeout(30 * time.Second)
 			return nil, fmt.Errorf("failed to complete upload with status %d: %s", completeResp.StatusCode(), completeResp.String())
 		}
 
