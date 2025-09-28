@@ -690,7 +690,7 @@ func (d *CZK) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 		}
 	}
 
-	// 初始化上传 - 根据文档使用first_upload接口
+	// 初始化上传 - 使用原始URL
 	initURL := "https://pan.szczk.top/czkapi/first_upload"
 
 	// 创建表单数据，根据文档要求的参数
@@ -791,21 +791,18 @@ func (d *CZK) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 		}
 	}
 
-	// 获取文件大小以设置Content-Length头部
-	var contentLength int64
-	if seeker, ok := tempFile.(io.Seeker); ok {
-		curPos, _ := seeker.Seek(0, io.SeekCurrent)
-		endPos, _ := seeker.Seek(0, io.SeekEnd)
-		contentLength = endPos
-		seeker.Seek(curPos, io.SeekStart) // 恢复当前位置
-	} else {
-		contentLength = file.GetSize()
+	// 上传文件到指定的URL，使用PUT方法并确保包含Content-Length头部
+	// 读取整个文件内容到内存中以确保Content-Length正确设置
+	fileContent, err := io.ReadAll(tempFile)
+	if err != nil {
+		// 恢复默认超时时间
+		d.client.SetTimeout(30 * time.Second)
+		return nil, fmt.Errorf("failed to read file content: %w", err)
 	}
 
-	// 上传文件到指定的URL，使用PUT方法并确保包含Content-Length头部
 	uploadResp, err := d.client.R().
-		SetHeader("Content-Length", fmt.Sprintf("%d", contentLength)).
-		SetBody(tempFile).
+		SetHeader("Content-Length", fmt.Sprintf("%d", len(fileContent))).
+		SetBody(fileContent).
 		Put(uploadURL)
 
 	if err != nil {
@@ -822,7 +819,7 @@ func (d *CZK) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 
 	log.Printf("CZK Put file uploaded to storage successfully")
 
-	// 完成上传 - 根据文档使用ok_upload接口
+	// 完成上传 - 使用原始URL
 	completeURL := "https://pan.szczk.top/czkapi/ok_upload"
 
 	// 创建完成上传的表单数据，根据文档要求的参数
