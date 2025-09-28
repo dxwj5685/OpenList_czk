@@ -247,6 +247,28 @@ func (d *CZK) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*m
 				}
 			}
 		}
+
+		// 对于S3链接，移除Authorization头，因为预签名URL已经包含认证信息
+		link.Header.Del("Authorization")
+
+		// 添加 Referer 头部，某些情况下可能需要
+		link.Header.Set("Referer", "https://pan.szczk.top/")
+	}
+
+	// 检查是否是重定向链接
+	res, err := d.client.R().
+		SetHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36").
+		Get(downloadLink)
+
+	if err != nil {
+		log.Printf("CZK Link: failed to check redirect for URL %s: %v", downloadLink, err)
+	} else if res.StatusCode() == http.StatusFound || res.StatusCode() == http.StatusMovedPermanently {
+		// 如果是重定向，使用重定向后的链接
+		redirectURL := res.Header().Get("Location")
+		if redirectURL != "" {
+			link.URL = redirectURL
+			log.Printf("CZK Link: using redirect URL: %s", redirectURL)
+		}
 	}
 
 	return link, nil
@@ -258,7 +280,8 @@ func (d *CZK) isS3CompatibleURL(rawURL string) bool {
 	return strings.Contains(rawURL, "X-Amz-") ||
 		strings.Contains(rawURL, "s3") ||
 		strings.Contains(rawURL, "amazonaws.com") ||
-		strings.Contains(rawURL, "aliyuncs.com")
+		strings.Contains(rawURL, "aliyuncs.com") ||
+		strings.Contains(rawURL, "downself.1785677.xyz") // 添加特定的存储域名
 }
 
 func (d *CZK) authenticate() error {
