@@ -517,7 +517,25 @@ func (d *CZK) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, er
 		return nil, fmt.Errorf("failed to send move request: %w", err)
 	}
 
-	if resp.StatusCode() != http.StatusOK {
+	if resp.StatusCode() == http.StatusUnauthorized {
+		// 尝试刷新令牌并重试
+		err := d.refreshToken()
+		if err != nil {
+			return nil, fmt.Errorf("failed to refresh token: %w", err)
+		}
+		// 重新发起请求
+		resp, err = d.client.R().
+			SetHeader("Authorization", "Bearer "+d.AccessToken).
+			SetHeader("Content-Type", writer.FormDataContentType()).
+			SetBody(payload.Bytes()).
+			Post(url)
+		if err != nil {
+			return nil, fmt.Errorf("failed to send move request after token refresh: %w", err)
+		}
+		if resp.StatusCode() != http.StatusOK {
+			return nil, fmt.Errorf("failed to move item with status %d: %s", resp.StatusCode(), resp.String())
+		}
+	} else if resp.StatusCode() != http.StatusOK {
 		return nil, fmt.Errorf("failed to move item with status %d: %s", resp.StatusCode(), resp.String())
 	}
 
@@ -535,6 +553,10 @@ func (d *CZK) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, er
 		} else if msg, ok := operationResp["msg"].(string); ok {
 			// 根据示例响应，也可能使用msg字段
 			message = msg
+		}
+		// 特别处理401错误，可能需要重新认证
+		if int64(code) == 401 {
+			return nil, fmt.Errorf("move item API error: code=%d, message=%s", int64(code), message)
 		}
 		return nil, fmt.Errorf("move item API error: code=%d, message=%s", int64(code), message)
 	}
