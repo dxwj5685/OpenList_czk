@@ -802,7 +802,7 @@ func (d *CZK) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 		contentLength = file.GetSize()
 	}
 
-	// 上传文件到指定的URL
+	// 上传文件到指定的URL，使用PUT方法并确保包含Content-Length头部
 	uploadResp, err := d.client.R().
 		SetHeader("Content-Length", fmt.Sprintf("%d", contentLength)).
 		SetBody(tempFile).
@@ -829,7 +829,8 @@ func (d *CZK) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 	completePayload := &bytes.Buffer{}
 	completeWriter := multipart.NewWriter(completePayload)
 	_ = completeWriter.WriteField("hash", md5Hash)
-	_ = completeWriter.WriteField("filename", file.GetName())
+	// 根据项目内存信息，filename字段实际表示文件大小（单位为字节）
+	_ = completeWriter.WriteField("filename", fmt.Sprintf("%d", file.GetSize()))
 	_ = completeWriter.WriteField("filesize", fmt.Sprintf("%d", file.GetSize()))
 	_ = completeWriter.WriteField("csrf_token", csrfToken)
 	_ = completeWriter.WriteField("file_key", fileKey)
