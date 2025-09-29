@@ -9,8 +9,6 @@ import (
 	"log"
 	"mime/multipart"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -229,81 +227,15 @@ func (d *CZK) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*m
 		}, nil
 	}
 
-	// 处理S3兼容的预签名URL
+	// 创建一个带有认证信息的链接
 	link := &model.Link{
 		URL: downloadLink,
-	}
-
-	// 解析URL中的查询参数，特别是X-Amz-*参数
-	parsedURL, err := url.Parse(downloadLink)
-	if err == nil {
-		queryParams := parsedURL.Query()
-		header := http.Header{}
-
-		// 将X-Amz-*查询参数转换为HTTP头
-		for key, values := range queryParams {
-			if strings.HasPrefix(key, "X-Amz-") {
-				for _, value := range values {
-					header.Add(key, value)
-				}
-			}
-		}
-
-		// 设置User-Agent
-		header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
-
-		if len(header) > 0 {
-			link.Header = header
-		}
+		Header: http.Header{
+			"User-Agent": []string{"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"},
+		},
 	}
 
 	return link, nil
-}
-
-// ReadStream 从S3兼容链接拉取标准数据流（适配跨存储复制），补充driver跨存储能力
-func (d *CZK) ReadStream(ctx context.Context, file model.Obj) (io.Reader, error) {
-	// 1. 调用现有Link方法获取S3兼容链接（自动处理令牌刷新）
-	linkResp, err := d.Link(ctx, file, model.LinkArgs{Redirect: true})
-	if err != nil {
-		return nil, fmt.Errorf("read stream: get S3 link failed: %w", err)
-	}
-	log.Printf("read stream: got S3 link, file_id=%s, link=%s***", file.GetID(), linkResp.URL[:min(len(linkResp.URL), 30)])
-
-	// 2. 发起S3链接请求（复用客户端标识，不自动解析响应以保留原始数据流）
-	resp, err := d.client.R().
-		SetHeader("User-Agent", linkResp.Header.Get("User-Agent")).
-		SetDoNotParseResponse(true). // 关键：避免resty自动处理响应，直接返回io.Reader
-		Get(linkResp.URL)
-	if err != nil {
-		// 重试逻辑：S3链接过期（403/404）时，刷新令牌后重新获取链接
-		if isLinkExpiredErr(err) {
-			log.Printf("read stream: S3 link expired, retry after refresh token")
-			if err := d.refreshToken(); err != nil {
-				return nil, fmt.Errorf("read stream: refresh token failed when retry: %w", err)
-			}
-			return d.ReadStream(ctx, file) // 递归重试
-		}
-		return nil, fmt.Errorf("read stream: request S3 link failed: %w", err)
-	}
-
-	// 3. 校验S3响应状态，无效时关闭流避免资源泄漏
-	if resp.StatusCode() != http.StatusOK {
-		_ = resp.RawBody().Close()
-		return nil, fmt.Errorf("read stream: S3 response error: status=%d, body=%s", resp.StatusCode(), resp.String())
-	}
-
-	// 4. 返回标准io.Reader（主程序可直接传入目标驱动Put方法）
-	return resp.RawBody(), nil
-}
-
-// isLinkExpiredErr 辅助判断：是否为S3链接过期/无效错误（适配S3常见错误码）
-func isLinkExpiredErr(err error) bool {
-	// 匹配resty请求错误中的403（签名过期）、404（链接失效）状态
-	if respErr, ok := err.(*resty.ResponseError); ok {
-		status := respErr.Response.StatusCode()
-		return status == http.StatusForbidden || status == http.StatusNotFound
-	}
-	return false
 }
 
 func (d *CZK) authenticate() error {
@@ -1162,4 +1094,10 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// 添加 Copy 方法实现跨存储复制功能
+func (d *CZK) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
+	// CZK存储暂时没有提供复制文件的API，因此无法在同一个存储内进行文件复制操作
+	return nil, errs.NotImplement
 }
