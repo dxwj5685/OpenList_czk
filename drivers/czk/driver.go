@@ -37,6 +37,7 @@ func (d *CZK) GetAddition() driver.Additional {
 }
 
 func (d *CZK) Init(ctx context.Context) error {
+	// TODO login / refresh token
 	d.client = resty.New()
 
 	// 设置全局User-Agent为Chrome浏览器标识
@@ -47,6 +48,7 @@ func (d *CZK) Init(ctx context.Context) error {
 		return err
 	}
 
+	//op.MustSaveDriverStorage(d)
 	return nil
 }
 
@@ -55,6 +57,7 @@ func (d *CZK) Drop(ctx context.Context) error {
 }
 
 func (d *CZK) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
+	// TODO return the files list, required
 	if err := d.refreshTokenIfNeeded(); err != nil {
 		return nil, fmt.Errorf("failed to refresh token: %w", err)
 	}
@@ -95,7 +98,7 @@ func (d *CZK) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]m
 	// 从响应中提取文件数据
 	var objs []model.Obj
 
-	// 根据API示例，正确的结构是 {code, message, data: {items: [], total_count}}
+	// 根据API示例，正确的结构是 {code, message, data: {items: [], total_count}
 	if data, ok := listResp["data"].(map[string]interface{}); ok {
 		if items, ok := data["items"].([]interface{}); ok {
 			for _, itemData := range items {
@@ -166,6 +169,7 @@ func (d *CZK) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]m
 }
 
 func (d *CZK) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
+	// TODO return link of file, required
 	if err := d.refreshTokenIfNeeded(); err != nil {
 		return nil, fmt.Errorf("failed to refresh token: %w", err)
 	}
@@ -238,163 +242,8 @@ func (d *CZK) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*m
 	return link, nil
 }
 
-func (d *CZK) authenticate() error {
-	url := "https://pan.szczk.top/czkapi/authenticate"
-
-	// 检查API密钥和密钥是否已设置
-	if d.APIKey == "" || d.APISecret == "" {
-		return fmt.Errorf("API key or secret not set")
-	}
-
-	// 设置请求超时时间
-	d.client.SetTimeout(30 * time.Second)
-
-	// 根据API文档，认证接口需要在请求头中包含x-api-key和x-api-secret
-	resp, err := d.client.R().
-		SetHeader("x-api-key", d.APIKey).
-		SetHeader("x-api-secret", d.APISecret).
-		Get(url)
-
-	if err != nil {
-		return fmt.Errorf("failed to send auth request: %w", err)
-	}
-
-	if resp.StatusCode() != http.StatusOK {
-		return fmt.Errorf("authentication failed with status %d: %s, response body: %s", resp.StatusCode(), resp.Status(), string(resp.Body()))
-	}
-
-	// 解析认证响应，获取access_token, refresh_token等
-	var authResp AuthResp
-	if err := json.Unmarshal(resp.Body(), &authResp); err != nil {
-		log.Printf("CZK authenticate: failed to parse auth response: %v, response body: %s", err, string(resp.Body()))
-		return fmt.Errorf("failed to parse auth response: %w, response body: %s", err, string(resp.Body()))
-	}
-
-	// 记录响应内容用于调试
-	log.Printf("CZK authenticate response: Status=%d, Message=%s, Data.AccessToken=%s***, Data.RefreshToken=%s***, Data.ExpiresIn=%d, Data.TokenType=%s",
-		authResp.Status, authResp.Message,
-		authResp.Data.AccessToken[:min(len(authResp.Data.AccessToken), 10)],
-		authResp.Data.RefreshToken[:min(len(authResp.Data.RefreshToken), 10)],
-		authResp.Data.ExpiresIn, authResp.Data.TokenType)
-
-	// 检查API返回的状态码
-	// 根据经验，即使status不是200，但如果message是"认证成功"，我们也认为认证成功
-	if authResp.Status != 200 && authResp.Message != "认证成功" {
-		return fmt.Errorf("authentication API error: status=%d, message=%s", authResp.Status, authResp.Message)
-	}
-
-	// 检查是否获得了必要的令牌
-	if authResp.Data.AccessToken == "" {
-		return fmt.Errorf("authentication succeeded but no access token returned")
-	}
-
-	if authResp.Data.RefreshToken == "" {
-		return fmt.Errorf("authentication succeeded but no refresh token returned")
-	}
-
-	// 更新令牌信息
-	d.AccessToken = authResp.Data.AccessToken
-	d.RefreshToken = authResp.Data.RefreshToken
-	d.ExpiresAt = time.Now().Add(time.Duration(authResp.Data.ExpiresIn) * time.Second)
-
-	log.Printf("CZK authenticate: successfully authenticated, access token: %s***, refresh token: %s***, expires at: %v",
-		d.AccessToken[:min(len(d.AccessToken), 10)], d.RefreshToken[:min(len(d.RefreshToken), 10)], d.ExpiresAt)
-
-	return nil
-}
-
-func (d *CZK) refreshTokenIfNeeded() error {
-	if time.Now().After(d.ExpiresAt) {
-		// 尝试刷新令牌
-		err := d.refreshToken()
-		if err != nil {
-			// 如果刷新令牌失败，尝试重新认证
-			log.Printf("Failed to refresh token: %v, attempting to re-authenticate", err)
-			return d.authenticate()
-		}
-	}
-	return nil
-}
-
-func (d *CZK) refreshToken() error {
-	url := "https://pan.szczk.top/czkapi/refresh_token"
-
-	// 检查是否有有效的刷新令牌
-	if d.RefreshToken == "" {
-		// 如果没有刷新令牌，需要重新进行认证
-		return fmt.Errorf("no refresh token available, need to re-authenticate")
-	}
-
-	log.Printf("CZK refreshToken: attempting to refresh token with refresh token: %s***", d.RefreshToken[:min(len(d.RefreshToken), 10)])
-
-	// 创建表单数据，根据API文档，只需要refresh_token字段
-	payload := &bytes.Buffer{}
-	writer := multipart.NewWriter(payload)
-	_ = writer.WriteField("refresh_token", d.RefreshToken)
-	err := writer.Close()
-	if err != nil {
-		return fmt.Errorf("failed to create refresh token form: %w", err)
-	}
-
-	// 设置请求超时时间
-	d.client.SetTimeout(30 * time.Second)
-
-	// 根据API文档，刷新令牌接口使用POST方法，请求体使用multipart/form-data格式
-	resp, err := d.client.R().
-		SetHeader("Content-Type", writer.FormDataContentType()).
-		SetBody(payload.Bytes()).
-		Post(url)
-
-	if err != nil {
-		return fmt.Errorf("failed to send refresh request: %w", err)
-	}
-
-	if resp.StatusCode() != http.StatusOK {
-		log.Printf("CZK refreshToken: refresh request failed with status %d: %s, response body: %s", resp.StatusCode(), resp.Status(), string(resp.Body()))
-		return fmt.Errorf("token refresh failed with status %d: %s, response body: %s", resp.StatusCode(), resp.Status(), string(resp.Body()))
-	}
-
-	// 解析刷新令牌响应，更新access_token等
-	var refreshResp RefreshResp
-	if err := json.Unmarshal(resp.Body(), &refreshResp); err != nil {
-		log.Printf("CZK refreshToken: failed to parse refresh response: %v, response body: %s", err, string(resp.Body()))
-		return fmt.Errorf("failed to parse refresh response: %w, response body: %s", err, string(resp.Body()))
-	}
-
-	// 记录响应内容用于调试
-	log.Printf("CZK refreshToken response: Status=%d, Message=%s, Success=%t, Data.AccessToken=%s***, Data.ExpiresIn=%d, Data.TokenType=%s",
-		refreshResp.Status, refreshResp.Message, refreshResp.Success,
-		refreshResp.Data.AccessToken[:min(len(refreshResp.Data.AccessToken), 10)],
-		refreshResp.Data.ExpiresIn, refreshResp.Data.TokenType)
-
-	// 检查API返回的状态码和成功标志
-	// 当Success为true且Status为200时，表示刷新成功
-	if !refreshResp.Success || refreshResp.Status != 200 {
-		// 特别处理"需要提供刷新令牌"和"无效或过期的刷新令牌"的错误
-		if refreshResp.Message == "需要提供刷新令牌" || refreshResp.Message == "无效或过期的刷新令牌" {
-			return fmt.Errorf("token refresh API error: status=%d, success=%t, message=%s, refresh token may be invalid or expired", refreshResp.Status, refreshResp.Success, refreshResp.Message)
-		}
-		return fmt.Errorf("token refresh API error: status=%d, success=%t, message=%s", refreshResp.Status, refreshResp.Success, refreshResp.Message)
-	}
-
-	// 更新访问令牌和过期时间
-	d.AccessToken = refreshResp.Data.AccessToken
-	d.ExpiresAt = time.Now().Add(time.Duration(refreshResp.Data.ExpiresIn) * time.Second)
-
-	// 如果返回了新的刷新令牌，则更新它
-	if refreshResp.Data.RefreshToken != "" {
-		d.RefreshToken = refreshResp.Data.RefreshToken
-		log.Printf("CZK refreshToken: new refresh token received and updated: %s***", d.RefreshToken[:min(len(d.RefreshToken), 10)])
-	}
-
-	log.Printf("CZK refreshToken: successfully refreshed token, access token: %s***, expires at: %v",
-		d.AccessToken[:min(len(d.AccessToken), 10)], d.ExpiresAt)
-
-	return nil
-}
-
-// 以下方法为可选实现
 func (d *CZK) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
+	// TODO create folder, optional
 	if err := d.refreshTokenIfNeeded(); err != nil {
 		return nil, fmt.Errorf("failed to refresh token: %w", err)
 	}
@@ -463,6 +312,7 @@ func (d *CZK) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) 
 }
 
 func (d *CZK) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
+	// TODO move obj, optional
 	if err := d.refreshTokenIfNeeded(); err != nil {
 		return nil, fmt.Errorf("failed to refresh token: %w", err)
 	}
@@ -539,7 +389,7 @@ func (d *CZK) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, er
 	}
 
 	// 根据API示例响应格式解析返回的数据
-	// 示例: {"code": 200, "msg": "成功", "data": {"items": [...]}}
+	// 示例: {"code": 200, "msg": "成功", "data": {"items": [...]}
 	newObj := &model.Object{
 		ID:       srcObj.GetID(),
 		Name:     srcObj.GetName(),
@@ -581,6 +431,7 @@ func (d *CZK) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, er
 }
 
 func (d *CZK) Rename(ctx context.Context, srcObj model.Obj, newName string) (model.Obj, error) {
+	// TODO rename obj, optional
 	if err := d.refreshTokenIfNeeded(); err != nil {
 		return nil, fmt.Errorf("failed to refresh token: %w", err)
 	}
@@ -664,7 +515,13 @@ func (d *CZK) Rename(ctx context.Context, srcObj model.Obj, newName string) (mod
 	return newObj, nil
 }
 
+func (d *CZK) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
+	// TODO copy obj, optional
+	return nil, errs.NotImplement
+}
+
 func (d *CZK) Remove(ctx context.Context, obj model.Obj) error {
+	// TODO remove obj, optional
 	if err := d.refreshTokenIfNeeded(); err != nil {
 		return fmt.Errorf("failed to refresh token: %w", err)
 	}
@@ -738,6 +595,7 @@ func (d *CZK) Remove(ctx context.Context, obj model.Obj) error {
 }
 
 func (d *CZK) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
+	// TODO upload file, optional
 	if err := d.refreshTokenIfNeeded(); err != nil {
 		return nil, fmt.Errorf("failed to refresh token: %w", err)
 	}
@@ -1067,24 +925,35 @@ func (d *CZK) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 }
 
 func (d *CZK) GetArchiveMeta(ctx context.Context, obj model.Obj, args model.ArchiveArgs) (model.ArchiveMeta, error) {
+	// TODO get archive file meta-info, return errs.NotImplement to use an internal archive tool, optional
 	return nil, errs.NotImplement
 }
 
 func (d *CZK) ListArchive(ctx context.Context, obj model.Obj, args model.ArchiveInnerArgs) ([]model.Obj, error) {
+	// TODO list args.InnerPath in the archive obj, return errs.NotImplement to use an internal archive tool, optional
 	return nil, errs.NotImplement
 }
 
 func (d *CZK) Extract(ctx context.Context, obj model.Obj, args model.ArchiveInnerArgs) (*model.Link, error) {
+	// TODO return link of file args.InnerPath in the archive obj, return errs.NotImplement to use an internal archive tool, optional
 	return nil, errs.NotImplement
 }
 
 func (d *CZK) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.Obj, args model.ArchiveDecompressArgs) ([]model.Obj, error) {
+	// TODO extract args.InnerPath path in the archive srcObj to the dstDir location, optional
+	// a folder with the same name as the archive file needs to be created to store the extracted results if args.PutIntoNewDir
+	// return errs.NotImplement to use an internal archive tool
 	return nil, errs.NotImplement
 }
 
 func (d *CZK) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	// TODO return storage details (total space, free space, etc.)
 	return nil, errs.NotImplement
 }
+
+//func (d *CZK) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {
+//	return nil, errs.NotSupport
+//}
 
 var _ driver.Driver = (*CZK)(nil)
 
@@ -1096,8 +965,158 @@ func min(a, b int) int {
 	return b
 }
 
-// 添加 Copy 方法实现跨存储复制功能
-func (d *CZK) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
-	// CZK存储暂时没有提供复制文件的API，因此无法在同一个存储内进行文件复制操作
-	return nil, errs.NotImplement
+// 以下为原有实现的辅助函数
+func (d *CZK) authenticate() error {
+	url := "https://pan.szczk.top/czkapi/authenticate"
+
+	// 检查API密钥和密钥是否已设置
+	if d.APIKey == "" || d.APISecret == "" {
+		return fmt.Errorf("API key or secret not set")
+	}
+
+	// 设置请求超时时间
+	d.client.SetTimeout(30 * time.Second)
+
+	// 根据API文档，认证接口需要在请求头中包含x-api-key和x-api-secret
+	resp, err := d.client.R().
+		SetHeader("x-api-key", d.APIKey).
+		SetHeader("x-api-secret", d.APISecret).
+		Get(url)
+
+	if err != nil {
+		return fmt.Errorf("failed to send auth request: %w", err)
+	}
+
+	if resp.StatusCode() != http.StatusOK {
+		return fmt.Errorf("authentication failed with status %d: %s, response body: %s", resp.StatusCode(), resp.Status(), string(resp.Body()))
+	}
+
+	// 解析认证响应，获取access_token, refresh_token等
+	var authResp AuthResp
+	if err := json.Unmarshal(resp.Body(), &authResp); err != nil {
+		log.Printf("CZK authenticate: failed to parse auth response: %v, response body: %s", err, string(resp.Body()))
+		return fmt.Errorf("failed to parse auth response: %w, response body: %s", err, string(resp.Body()))
+	}
+
+	// 记录响应内容用于调试
+	log.Printf("CZK authenticate response: Status=%d, Message=%s, Data.AccessToken=%s***, Data.RefreshToken=%s***, Data.ExpiresIn=%d, Data.TokenType=%s",
+		authResp.Status, authResp.Message,
+		authResp.Data.AccessToken[:min(len(authResp.Data.AccessToken), 10)],
+		authResp.Data.RefreshToken[:min(len(authResp.Data.RefreshToken), 10)],
+		authResp.Data.ExpiresIn, authResp.Data.TokenType)
+
+	// 检查API返回的状态码
+	// 根据经验，即使status不是200，但如果message是"认证成功"，我们也认为认证成功
+	if authResp.Status != 200 && authResp.Message != "认证成功" {
+		return fmt.Errorf("authentication API error: status=%d, message=%s", authResp.Status, authResp.Message)
+	}
+
+	// 检查是否获得了必要的令牌
+	if authResp.Data.AccessToken == "" {
+		return fmt.Errorf("authentication succeeded but no access token returned")
+	}
+
+	if authResp.Data.RefreshToken == "" {
+		return fmt.Errorf("authentication succeeded but no refresh token returned")
+	}
+
+	// 更新令牌信息
+	d.AccessToken = authResp.Data.AccessToken
+	d.RefreshToken = authResp.Data.RefreshToken
+	d.ExpiresAt = time.Now().Add(time.Duration(authResp.Data.ExpiresIn) * time.Second)
+
+	log.Printf("CZK authenticate: successfully authenticated, access token: %s***, refresh token: %s***, expires at: %v",
+		d.AccessToken[:min(len(d.AccessToken), 10)], d.RefreshToken[:min(len(d.RefreshToken), 10)], d.ExpiresAt)
+
+	return nil
+}
+
+func (d *CZK) refreshTokenIfNeeded() error {
+	if time.Now().After(d.ExpiresAt) {
+		// 尝试刷新令牌
+		err := d.refreshToken()
+		if err != nil {
+			// 如果刷新令牌失败，尝试重新认证
+			log.Printf("Failed to refresh token: %v, attempting to re-authenticate", err)
+			return d.authenticate()
+		}
+	}
+	return nil
+}
+
+func (d *CZK) refreshToken() error {
+	url := "https://pan.szczk.top/czkapi/refresh_token"
+
+	// 检查是否有有效的刷新令牌
+	if d.RefreshToken == "" {
+		// 如果没有刷新令牌，需要重新进行认证
+		return fmt.Errorf("no refresh token available, need to re-authenticate")
+	}
+
+	log.Printf("CZK refreshToken: attempting to refresh token with refresh token: %s***", d.RefreshToken[:min(len(d.RefreshToken), 10)])
+
+	// 创建表单数据，根据API文档，只需要refresh_token字段
+	payload := &bytes.Buffer{}
+	writer := multipart.NewWriter(payload)
+	_ = writer.WriteField("refresh_token", d.RefreshToken)
+	err := writer.Close()
+	if err != nil {
+		return fmt.Errorf("failed to create refresh token form: %w", err)
+	}
+
+	// 设置请求超时时间
+	d.client.SetTimeout(30 * time.Second)
+
+	// 根据API文档，刷新令牌接口使用POST方法，请求体使用multipart/form-data格式
+	resp, err := d.client.R().
+		SetHeader("Content-Type", writer.FormDataContentType()).
+		SetBody(payload.Bytes()).
+		Post(url)
+
+	if err != nil {
+		return fmt.Errorf("failed to send refresh request: %w", err)
+	}
+
+	if resp.StatusCode() != http.StatusOK {
+		log.Printf("CZK refreshToken: refresh request failed with status %d: %s, response body: %s", resp.StatusCode(), resp.Status(), string(resp.Body()))
+		return fmt.Errorf("token refresh failed with status %d: %s, response body: %s", resp.StatusCode(), resp.Status(), string(resp.Body()))
+	}
+
+	// 解析刷新令牌响应，更新access_token等
+	var refreshResp RefreshResp
+	if err := json.Unmarshal(resp.Body(), &refreshResp); err != nil {
+		log.Printf("CZK refreshToken: failed to parse refresh response: %v, response body: %s", err, string(resp.Body()))
+		return fmt.Errorf("failed to parse refresh response: %w, response body: %s", err, string(resp.Body()))
+	}
+
+	// 记录响应内容用于调试
+	log.Printf("CZK refreshToken response: Status=%d, Message=%s, Success=%t, Data.AccessToken=%s***, Data.ExpiresIn=%d, Data.TokenType=%s",
+		refreshResp.Status, refreshResp.Message, refreshResp.Success,
+		refreshResp.Data.AccessToken[:min(len(refreshResp.Data.AccessToken), 10)],
+		refreshResp.Data.ExpiresIn, refreshResp.Data.TokenType)
+
+	// 检查API返回的状态码和成功标志
+	// 当Success为true且Status为200时，表示刷新成功
+	if !refreshResp.Success || refreshResp.Status != 200 {
+		// 特别处理"需要提供刷新令牌"和"无效或过期的刷新令牌"的错误
+		if refreshResp.Message == "需要提供刷新令牌" || refreshResp.Message == "无效或过期的刷新令牌" {
+			return fmt.Errorf("token refresh API error: status=%d, success=%t, message=%s, refresh token may be invalid or expired", refreshResp.Status, refreshResp.Success, refreshResp.Message)
+		}
+		return fmt.Errorf("token refresh API error: status=%d, success=%t, message=%s", refreshResp.Status, refreshResp.Success, refreshResp.Message)
+	}
+
+	// 更新访问令牌和过期时间
+	d.AccessToken = refreshResp.Data.AccessToken
+	d.ExpiresAt = time.Now().Add(time.Duration(refreshResp.Data.ExpiresIn) * time.Second)
+
+	// 如果返回了新的刷新令牌，则更新它
+	if refreshResp.Data.RefreshToken != "" {
+		d.RefreshToken = refreshResp.Data.RefreshToken
+		log.Printf("CZK refreshToken: new refresh token received and updated: %s***", d.RefreshToken[:min(len(d.RefreshToken), 10)])
+	}
+
+	log.Printf("CZK refreshToken: successfully refreshed token, access token: %s***, expires at: %v",
+		d.AccessToken[:min(len(d.AccessToken), 10)], d.ExpiresAt)
+
+	return nil
 }
