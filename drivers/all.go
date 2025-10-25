@@ -78,6 +78,7 @@ import (
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/weiyun"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/wopan"
 	_ "github.com/OpenListTeam/OpenList/v4/drivers/yandex_disk"
+	_ "github.com/OpenListTeam/OpenList/v4/drivers/czk"
 )
 
 // All do nothing,just for import
