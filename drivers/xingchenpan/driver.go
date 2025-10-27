@@ -1,10 +1,9 @@
-package czk
+package xingchenpan
 
 import (
     "bytes"
     "context"
     "crypto/md5"
-    "encoding/hex"
     "encoding/json"
     "fmt"
     "io"
@@ -18,6 +17,7 @@ import (
     "github.com/OpenListTeam/OpenList/v4/internal/errs"
     "github.com/OpenListTeam/OpenList/v4/internal/model"
     "github.com/OpenListTeam/OpenList/v4/internal/stream"
+    "github.com/OpenListTeam/OpenList/v4/pkg/utils"
     "github.com/go-resty/resty/v2"
 )
 
@@ -174,11 +174,11 @@ func (d *CZK) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
     }
 
     // 1. 计算文件MD5
-    tempFile, md5Hash, err := stream.CacheFullAndHash(file, &up, md5.New)
+    // 修正：使用 utils.MD5 作为哈希算法，并移除 tempFile.Close()
+    tempFile, md5Hash, err := stream.CacheFullAndHash(file, &up, utils.MD5)
     if err != nil {
         return nil, fmt.Errorf("failed to calculate file md5: %w", err)
     }
-    defer tempFile.Close()
 
     // 2. 初始化上传
     initURL := fmt.Sprintf("%sczkapi/first_upload", d.baseURL())
