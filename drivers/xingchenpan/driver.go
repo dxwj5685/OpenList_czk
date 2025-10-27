@@ -3,7 +3,6 @@ package xingchenpan
 import (
     "bytes"
     "context"
-    "crypto/md5"
     "encoding/json"
     "fmt"
     "io"
