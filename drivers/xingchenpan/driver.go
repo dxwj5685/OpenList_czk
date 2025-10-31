@@ -7,7 +7,6 @@ import (
     "fmt"
     "io"
     "log"
-    "mime/multipart"
     "net/http"
     "strconv"
     "time"
@@ -173,7 +172,6 @@ func (d *CZK) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
     }
 
     // 1. 计算文件MD5
-    // 修正：使用 utils.MD5 作为哈希算法，并移除 tempFile.Close()
     tempFile, md5Hash, err := stream.CacheFullAndHash(file, &up, utils.MD5)
     if err != nil {
         return nil, fmt.Errorf("failed to calculate file md5: %w", err)
@@ -181,18 +179,17 @@ func (d *CZK) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 
     // 2. 初始化上传
     initURL := fmt.Sprintf("%sczkapi/first_upload", d.baseURL())
-    payload := &bytes.Buffer{}
-    writer := multipart.NewWriter(payload)
-    _ = writer.WriteField("hash", md5Hash)
-    _ = writer.WriteField("filename", file.GetName())
-    _ = writer.WriteField("filesize", strconv.FormatInt(file.GetSize(), 10))
-    _ = writer.WriteField("folder", dstDir.GetID())
-    writer.Close()
-
+    // 修改：使用 JSON 格式发送
+    initPayload := map[string]interface{}{
+        "hash":      md5Hash,
+        "filename":  file.GetName(),
+        "filesize":  file.GetSize(),
+        "folder":    dstDir.GetID(),
+    }
     resp, err := d.client.R().
         SetHeader("Authorization", "Bearer "+d.AccessToken).
-        SetHeader("Content-Type", writer.FormDataContentType()).
-        SetBody(payload.Bytes()).
+        SetHeader("Content-Type", "application/json").
+        SetBody(initPayload).
         Post(initURL)
 
     if err != nil {
@@ -232,20 +229,20 @@ func (d *CZK) Put(ctx context.Context, dstDir model.Obj, file model.FileStreamer
 
         // 4. 通知上传完成
         completeURL := fmt.Sprintf("%sczkapi/ok_upload", d.baseURL())
-        completePayload := &bytes.Buffer{}
-        completeWriter := multipart.NewWriter(completePayload)
-        _ = completeWriter.WriteField("hash", md5Hash)
-        _ = completeWriter.WriteField("filename", file.GetName())
-        _ = completeWriter.WriteField("filesize", strconv.FormatInt(file.GetSize(), 10))
-        _ = completeWriter.WriteField("csrf_token", csrfToken)
-        _ = completeWriter.WriteField("file_key", fileKey)
-        _ = completeWriter.WriteField("folder", dstDir.GetID())
-        completeWriter.Close()
+        // 修改：使用 JSON 格式发送
+        completePayload := map[string]interface{}{
+            "hash":       md5Hash,
+            "filename":   file.GetName(),
+            "filesize":   file.GetSize(),
+            "csrf_token": csrfToken,
+            "file_key":   fileKey,
+            "folder":     dstDir.GetID(),
+        }
 
         completeResp, err := d.client.R().
             SetHeader("Authorization", "Bearer "+d.AccessToken).
-            SetHeader("Content-Type", completeWriter.FormDataContentType()).
-            SetBody(completePayload.Bytes()).
+            SetHeader("Content-Type", "application/json").
+            SetBody(completePayload).
             Post(completeURL)
 
         if err != nil {
@@ -275,16 +272,15 @@ func (d *CZK) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) 
     }
 
     url := fmt.Sprintf("%sczkapi/create_folder", d.baseURL())
-    payload := &bytes.Buffer{}
-    writer := multipart.NewWriter(payload)
-    _ = writer.WriteField("parent_id", parentDir.GetID())
-    _ = writer.WriteField("name", dirName)
-    writer.Close()
-
+    // 修改：使用 JSON 格式发送
+    payload := map[string]string{
+        "parent_id": parentDir.GetID(),
+        "name":      dirName,
+    }
     resp, err := d.client.R().
         SetHeader("Authorization", "Bearer "+d.AccessToken).
-        SetHeader("Content-Type", writer.FormDataContentType()).
-        SetBody(payload.Bytes()).
+        SetHeader("Content-Type", "application/json").
+        SetBody(payload).
         Post(url)
 
     if err != nil {
@@ -312,21 +308,20 @@ func (d *CZK) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, er
     }
 
     url := fmt.Sprintf("%sczkapi/move_item", d.baseURL())
-    payload := &bytes.Buffer{}
-    writer := multipart.NewWriter(payload)
-    _ = writer.WriteField("id", srcObj.GetID())
-    itemType := "folder"
-    if !srcObj.IsDir() {
-        itemType = "file"
+    // 修改：使用 JSON 格式发送
+    payload := map[string]string{
+        "id":        srcObj.GetID(),
+        "type":      "file",
+        "target_id": dstDir.GetID(),
     }
-    _ = writer.WriteField("type", itemType)
-    _ = writer.WriteField("target_id", dstDir.GetID())
-    writer.Close()
+    if srcObj.IsDir() {
+        payload["type"] = "folder"
+    }
 
     resp, err := d.client.R().
         SetHeader("Authorization", "Bearer "+d.AccessToken).
-        SetHeader("Content-Type", writer.FormDataContentType()).
-        SetBody(payload.Bytes()).
+        SetHeader("Content-Type", "application/json").
+        SetBody(payload).
         Post(url)
 
     if err != nil {
@@ -352,21 +347,20 @@ func (d *CZK) Rename(ctx context.Context, srcObj model.Obj, newName string) (mod
     }
 
     url := fmt.Sprintf("%sczkapi/rename_item", d.baseURL())
-    payload := &bytes.Buffer{}
-    writer := multipart.NewWriter(payload)
-    _ = writer.WriteField("id", srcObj.GetID())
-    itemType := "folder"
-    if !srcObj.IsDir() {
-        itemType = "file"
+    // 修改：使用 JSON 格式发送
+    payload := map[string]string{
+        "id":       srcObj.GetID(),
+        "type":     "file",
+        "new_name": newName,
     }
-    _ = writer.WriteField("type", itemType)
-    _ = writer.WriteField("new_name", newName)
-    writer.Close()
+    if srcObj.IsDir() {
+        payload["type"] = "folder"
+    }
 
     resp, err := d.client.R().
         SetHeader("Authorization", "Bearer "+d.AccessToken).
-        SetHeader("Content-Type", writer.FormDataContentType()).
-        SetBody(payload.Bytes()).
+        SetHeader("Content-Type", "application/json").
+        SetBody(payload).
         Post(url)
 
     if err != nil {
@@ -391,20 +385,19 @@ func (d *CZK) Remove(ctx context.Context, obj model.Obj) error {
     }
 
     url := fmt.Sprintf("%sczkapi/delete_item", d.baseURL())
-    payload := &bytes.Buffer{}
-    writer := multipart.NewWriter(payload)
-    _ = writer.WriteField("id", obj.GetID())
-    itemType := "folder"
-    if !obj.IsDir() {
-        itemType = "file"
+    // 修改：使用 JSON 格式发送
+    payload := map[string]string{
+        "id":   obj.GetID(),
+        "type": "file",
     }
-    _ = writer.WriteField("type", itemType)
-    writer.Close()
+    if obj.IsDir() {
+        payload["type"] = "folder"
+    }
 
     resp, err := d.client.R().
         SetHeader("Authorization", "Bearer "+d.AccessToken).
-        SetHeader("Content-Type", writer.FormDataContentType()).
-        SetBody(payload.Bytes()).
+        SetHeader("Content-Type", "application/json").
+        SetBody(payload).
         Post(url)
 
     if err != nil {
@@ -467,14 +460,13 @@ func (d *CZK) refreshToken() error {
     }
 
     url := fmt.Sprintf("%sczkapi/refresh_token", d.baseURL())
-    payload := &bytes.Buffer{}
-    writer := multipart.NewWriter(payload)
-    _ = writer.WriteField("refresh_token", d.RefreshToken)
-    writer.Close()
-
+    // 修改：使用 JSON 格式发送
+    payload := map[string]string{
+        "refresh_token": d.RefreshToken,
+    }
     resp, err := d.client.R().
-        SetHeader("Content-Type", writer.FormDataContentType()).
-        SetBody(payload.Bytes()).
+        SetHeader("Content-Type", "application/json").
+        SetBody(payload).
         Post(url)
 
     if err != nil {
