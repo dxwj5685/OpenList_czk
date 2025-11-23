@@ -2,10 +2,11 @@ package op
 
 import (
 	"context"
-	stderrors "errors"
 	stdpath "path"
+	"strconv"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -14,6 +15,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/time/rate"
 )
 
 var listG singleflight.Group[[]model.Obj]
@@ -57,7 +59,7 @@ func List(ctx context.Context, storage driver.Driver, path string, args model.Li
 		model.WrapObjsName(files)
 		// call hooks
 		go func(reqPath string, files []model.Obj) {
-			HandleObjsUpdateHook(reqPath, files)
+			HandleObjsUpdateHook(context.WithoutCancel(ctx), reqPath, files)
 		}(utils.GetFullPath(storage.GetStorage().MountPath, path), files)
 
 		// sort objs
@@ -173,10 +175,10 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		mode = storage.(driver.LinkCacheModeResolver).ResolveLinkCacheMode(path)
 	}
 	typeKey := args.Type
-	if mode&driver.LinkCacheIP == 1 {
+	if mode&driver.LinkCacheIP == driver.LinkCacheIP {
 		typeKey += "/" + args.IP
 	}
-	if mode&driver.LinkCacheUA == 1 {
+	if mode&driver.LinkCacheUA == driver.LinkCacheUA {
 		typeKey += "/" + args.Header.Get("User-Agent")
 	}
 	key := Key(storage, path)
@@ -310,7 +312,7 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 	srcDirPath := stdpath.Dir(srcPath)
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
 	if dstDirPath == srcDirPath {
-		return stderrors.New("move in place")
+		return errors.New("move in place")
 	}
 	srcRawObj, err := Get(ctx, storage, srcPath)
 	if err != nil {
@@ -343,8 +345,24 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 			}
 		}
 	default:
-		return errs.NotImplement
+		err = errs.NotImplement
 	}
+
+	if !utils.IsBool(lazyCache...) && err == nil && needHandleObjsUpdateHook() {
+		if !srcObj.IsDir() {
+			go List(context.Background(), storage, dstDirPath, model.ListArgs{Refresh: true})
+		} else {
+			targetPath := stdpath.Join(dstDirPath, srcObj.GetName())
+			var limiter *rate.Limiter
+			if l, _ := GetSettingItemByKey(conf.HandleHookRateLimit); l != nil {
+				if f, e := strconv.ParseFloat(l.Value, 64); e == nil && f > .0 {
+					limiter = rate.NewLimiter(rate.Limit(f), 1)
+				}
+			}
+			go RecursivelyListStorage(context.Background(), storage, targetPath, limiter, nil)
+		}
+	}
+
 	return errors.WithStack(err)
 }
 
@@ -397,7 +415,7 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 	srcPath = utils.FixAndCleanPath(srcPath)
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
 	if dstDirPath == stdpath.Dir(srcPath) {
-		return stderrors.New("copy in place")
+		return errors.New("copy in place")
 	}
 	srcRawObj, err := Get(ctx, storage, srcPath)
 	if err != nil {
@@ -428,8 +446,24 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 			}
 		}
 	default:
-		return errs.NotImplement
+		err = errs.NotImplement
 	}
+
+	if !utils.IsBool(lazyCache...) && err == nil && needHandleObjsUpdateHook() {
+		if !srcObj.IsDir() {
+			go List(context.Background(), storage, dstDirPath, model.ListArgs{Refresh: true})
+		} else {
+			targetPath := stdpath.Join(dstDirPath, srcObj.GetName())
+			var limiter *rate.Limiter
+			if l, _ := GetSettingItemByKey(conf.HandleHookRateLimit); l != nil {
+				if f, e := strconv.ParseFloat(l.Value, 64); e == nil && f > .0 {
+					limiter = rate.NewLimiter(rate.Limit(f), 1)
+				}
+			}
+			go RecursivelyListStorage(context.Background(), storage, targetPath, limiter, nil)
+		}
+	}
+
 	return errors.WithStack(err)
 }
 
@@ -557,6 +591,9 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 			err = Remove(ctx, storage, tempPath)
 		}
 	}
+	if !utils.IsBool(lazyCache...) && err == nil && needHandleObjsUpdateHook() {
+		go List(context.Background(), storage, dstDirPath, model.ListArgs{Refresh: true})
+	}
 	return errors.WithStack(err)
 }
 
@@ -568,15 +605,15 @@ func PutURL(ctx context.Context, storage driver.Driver, dstDirPath, dstName, url
 	dstPath := stdpath.Join(dstDirPath, dstName)
 	_, err := GetUnwrap(ctx, storage, dstPath)
 	if err == nil {
-		return errors.New("obj already exists")
+		return errors.WithStack(errs.ObjectAlreadyExists)
 	}
 	err = MakeDir(ctx, storage, dstDirPath)
 	if err != nil {
-		return errors.WithMessagef(err, "failed to put url")
+		return errors.WithMessagef(err, "failed to make dir [%s]", dstDirPath)
 	}
 	dstDir, err := GetUnwrap(ctx, storage, dstDirPath)
 	if err != nil {
-		return errors.WithMessagef(err, "failed to put url")
+		return errors.WithMessagef(err, "failed to get dir [%s]", dstDirPath)
 	}
 	switch s := storage.(type) {
 	case driver.PutURLResult:
@@ -599,8 +636,56 @@ func PutURL(ctx context.Context, storage driver.Driver, dstDirPath, dstName, url
 			}
 		}
 	default:
-		return errs.NotImplement
+		return errors.WithStack(errs.NotImplement)
+	}
+	if !utils.IsBool(lazyCache...) && err == nil && needHandleObjsUpdateHook() {
+		go List(context.Background(), storage, dstDirPath, model.ListArgs{Refresh: true})
 	}
 	log.Debugf("put url [%s](%s) done", dstName, url)
 	return errors.WithStack(err)
+}
+
+func GetDirectUploadTools(storage driver.Driver) []string {
+	du, ok := storage.(driver.DirectUploader)
+	if !ok {
+		return nil
+	}
+	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
+		return nil
+	}
+	return du.GetDirectUploadTools()
+}
+
+func GetDirectUploadInfo(ctx context.Context, tool string, storage driver.Driver, dstDirPath, dstName string, fileSize int64) (any, error) {
+	du, ok := storage.(driver.DirectUploader)
+	if !ok {
+		return nil, errors.WithStack(errs.NotImplement)
+	}
+	if storage.Config().CheckStatus && storage.GetStorage().Status != WORK {
+		return nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
+	}
+	dstDirPath = utils.FixAndCleanPath(dstDirPath)
+	dstPath := stdpath.Join(dstDirPath, dstName)
+	_, err := GetUnwrap(ctx, storage, dstPath)
+	if err == nil {
+		return nil, errors.WithStack(errs.ObjectAlreadyExists)
+	}
+	err = MakeDir(ctx, storage, dstDirPath)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed to make dir [%s]", dstDirPath)
+	}
+	dstDir, err := GetUnwrap(ctx, storage, dstDirPath)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed to get dir [%s]", dstDirPath)
+	}
+	info, err := du.GetDirectUploadInfo(ctx, tool, dstDir, dstName, fileSize)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	return info, nil
+}
+
+func needHandleObjsUpdateHook() bool {
+	needHandle, _ := GetSettingItemByKey(conf.HandleHookAfterWriting)
+	return needHandle != nil && (needHandle.Value == "true" || needHandle.Value == "1")
 }
