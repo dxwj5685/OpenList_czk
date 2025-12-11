@@ -1,4 +1,4 @@
-package openlist
+package alist_v3
 
 import (
 	"time"
@@ -76,7 +76,7 @@ type MeResp struct {
 	Username   string `json:"username"`
 	Password   string `json:"password"`
 	BasePath   string `json:"base_path"`
-	Role       int    `json:"role"`
+	Role       []int  `json:"role"`
 	Disabled   bool   `json:"disabled"`
 	Permission int    `json:"permission"`
 	SsoId      string `json:"sso_id"`
@@ -167,5 +167,4 @@ type DecompressReq struct {
 	Name          []string `json:"name"`
 	PutIntoNewDir bool     `json:"put_into_new_dir"`
 	SrcDir        string   `json:"src_dir"`
-	Overwrite     bool     `json:"overwrite"`
 }

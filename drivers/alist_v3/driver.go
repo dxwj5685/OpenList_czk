@@ -1,4 +1,4 @@
-package openlist
+package alist_v3
 
 import (
 	"context"
@@ -20,20 +20,20 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-type OpenList struct {
+type AListV3 struct {
 	model.Storage
 	Addition
 }
 
-func (d *OpenList) Config() driver.Config {
+func (d *AListV3) Config() driver.Config {
 	return config
 }
 
-func (d *OpenList) GetAddition() driver.Additional {
+func (d *AListV3) GetAddition() driver.Additional {
 	return &d.Addition
 }
 
-func (d *OpenList) Init(ctx context.Context) error {
+func (d *AListV3) Init(ctx context.Context) error {
 	d.Addition.Address = strings.TrimSuffix(d.Addition.Address, "/")
 	var resp common.Resp[MeResp]
 	_, _, err := d.request("/me", http.MethodGet, func(req *resty.Request) {
@@ -56,7 +56,7 @@ func (d *OpenList) Init(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if resp.Data.Role == model.GUEST {
+	if utils.SliceContains(resp.Data.Role, model.GUEST) {
 		u := d.Address + "/api/public/settings"
 		res, err := base.RestyClient.R().Get(u)
 		if err != nil {
@@ -70,11 +70,11 @@ func (d *OpenList) Init(ctx context.Context) error {
 	return err
 }
 
-func (d *OpenList) Drop(ctx context.Context) error {
+func (d *AListV3) Drop(ctx context.Context) error {
 	return nil
 }
 
-func (d *OpenList) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
+func (d *AListV3) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	var resp common.Resp[FsListResp]
 	_, _, err := d.request("/fs/list", http.MethodPost, func(req *resty.Request) {
 		req.SetResult(&resp).SetBody(ListReq{
@@ -95,7 +95,6 @@ func (d *OpenList) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 		file := model.ObjThumb{
 			Object: model.Object{
 				Name:     f.Name,
-				Path:     path.Join(dir.GetPath(), f.Name),
 				Modified: f.Modified,
 				Ctime:    f.Created,
 				Size:     f.Size,
@@ -109,7 +108,7 @@ func (d *OpenList) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 	return files, nil
 }
 
-func (d *OpenList) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
+func (d *AListV3) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	var resp common.Resp[FsGetResp]
 	headers := map[string]string{
 		"User-Agent": base.UserAgent,
@@ -143,7 +142,7 @@ func (d *OpenList) Link(ctx context.Context, file model.Obj, args model.LinkArgs
 	}, nil
 }
 
-func (d *OpenList) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
+func (d *AListV3) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
 	_, _, err := d.request("/fs/mkdir", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(MkdirOrLinkReq{
 			Path: path.Join(parentDir.GetPath(), dirName),
@@ -152,7 +151,7 @@ func (d *OpenList) MakeDir(ctx context.Context, parentDir model.Obj, dirName str
 	return err
 }
 
-func (d *OpenList) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
+func (d *AListV3) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
 	_, _, err := d.request("/fs/move", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(MoveCopyReq{
 			SrcDir: path.Dir(srcObj.GetPath()),
@@ -163,7 +162,7 @@ func (d *OpenList) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
 	return err
 }
 
-func (d *OpenList) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
+func (d *AListV3) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
 	_, _, err := d.request("/fs/rename", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(RenameReq{
 			Path: srcObj.GetPath(),
@@ -173,7 +172,7 @@ func (d *OpenList) Rename(ctx context.Context, srcObj model.Obj, newName string)
 	return err
 }
 
-func (d *OpenList) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
+func (d *AListV3) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 	_, _, err := d.request("/fs/copy", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(MoveCopyReq{
 			SrcDir: path.Dir(srcObj.GetPath()),
@@ -184,7 +183,7 @@ func (d *OpenList) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 	return err
 }
 
-func (d *OpenList) Remove(ctx context.Context, obj model.Obj) error {
+func (d *AListV3) Remove(ctx context.Context, obj model.Obj) error {
 	_, _, err := d.request("/fs/remove", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(RemoveReq{
 			Dir:   path.Dir(obj.GetPath()),
@@ -194,7 +193,7 @@ func (d *OpenList) Remove(ctx context.Context, obj model.Obj) error {
 	return err
 }
 
-func (d *OpenList) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer, up driver.UpdateProgress) error {
+func (d *AListV3) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer, up driver.UpdateProgress) error {
 	reader := driver.NewLimitedUploadStream(ctx, &driver.ReaderUpdatingProgress{
 		Reader:         s,
 		UpdateProgress: up,
@@ -245,7 +244,7 @@ func (d *OpenList) Put(ctx context.Context, dstDir model.Obj, s model.FileStream
 	return nil
 }
 
-func (d *OpenList) GetArchiveMeta(ctx context.Context, obj model.Obj, args model.ArchiveArgs) (model.ArchiveMeta, error) {
+func (d *AListV3) GetArchiveMeta(ctx context.Context, obj model.Obj, args model.ArchiveArgs) (model.ArchiveMeta, error) {
 	if !d.ForwardArchiveReq {
 		return nil, errs.NotImplement
 	}
@@ -278,7 +277,7 @@ func (d *OpenList) GetArchiveMeta(ctx context.Context, obj model.Obj, args model
 	}, nil
 }
 
-func (d *OpenList) ListArchive(ctx context.Context, obj model.Obj, args model.ArchiveInnerArgs) ([]model.Obj, error) {
+func (d *AListV3) ListArchive(ctx context.Context, obj model.Obj, args model.ArchiveInnerArgs) ([]model.Obj, error) {
 	if !d.ForwardArchiveReq {
 		return nil, errs.NotImplement
 	}
@@ -322,7 +321,7 @@ func (d *OpenList) ListArchive(ctx context.Context, obj model.Obj, args model.Ar
 	return files, nil
 }
 
-func (d *OpenList) Extract(ctx context.Context, obj model.Obj, args model.ArchiveInnerArgs) (*model.Link, error) {
+func (d *AListV3) Extract(ctx context.Context, obj model.Obj, args model.ArchiveInnerArgs) (*model.Link, error) {
 	if !d.ForwardArchiveReq {
 		return nil, errs.NotSupport
 	}
@@ -347,7 +346,7 @@ func (d *OpenList) Extract(ctx context.Context, obj model.Obj, args model.Archiv
 	}, nil
 }
 
-func (d *OpenList) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.Obj, args model.ArchiveDecompressArgs) error {
+func (d *AListV3) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.Obj, args model.ArchiveDecompressArgs) error {
 	if !d.ForwardArchiveReq {
 		return errs.NotImplement
 	}
@@ -361,13 +360,12 @@ func (d *OpenList) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.O
 			Name:          []string{name},
 			PutIntoNewDir: args.PutIntoNewDir,
 			SrcDir:        dir,
-			Overwrite:     args.Overwrite,
 		})
 	})
 	return err
 }
 
-func (d *OpenList) ResolveLinkCacheMode(_ string) driver.LinkCacheMode {
+func (d *AListV3) ResolveLinkCacheMode(_ string) driver.LinkCacheMode {
 	var mode driver.LinkCacheMode
 	if d.PassIPToUpsteam {
 		mode |= driver.LinkCacheIP
@@ -378,4 +376,4 @@ func (d *OpenList) ResolveLinkCacheMode(_ string) driver.LinkCacheMode {
 	return mode
 }
 
-var _ driver.Driver = (*OpenList)(nil)
+var _ driver.Driver = (*AListV3)(nil)
