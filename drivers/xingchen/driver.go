@@ -186,10 +186,8 @@ func (d *XingChen) Put(_ context.Context, dstDir model.Obj, stream model.FileStr
 func (d *XingChen) getFiles(parentID string) ([]File, error) {
 	var resp FileListResp
 	params := map[string]string{
-		"authcode":  d.AuthCode,
-		"type":      "1",
-		"sortname":  "name",
-		"sortorder": "asc",
+		"authcode": d.AuthCode,
+		"type":     "1",
 	}
 	if parentID != "" && parentID != "0" {
 		params["fid"] = parentID
