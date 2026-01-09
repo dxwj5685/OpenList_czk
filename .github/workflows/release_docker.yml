@@ -1,22 +1,22 @@
 name: Release builds (Docker)
 
-于:
+on:
   workflow_dispatch:
     inputs:
       manual_tag:
         description: 'Tag name (like v0.1.0). Required if as_latest is true.'
         required: false
-        输入: string
+        type: string
       as_latest:
         description: 'Tag as latest?'
         required: true
-        默认: 'false'
-        输入: choice
+        default: 'false'
+        type: choice
         options:
           - 'true'
           - 'false'
   push:
-    标签:
+    tags:
       - 'v*'
 
 concurrency:
