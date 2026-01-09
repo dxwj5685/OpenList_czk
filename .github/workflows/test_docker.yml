@@ -1,12 +1,12 @@
 name: Beta Release (Docker)
 
-于:
+on:
   workflow_dispatch:
   push:
-    分支:
+    branches:
       - main
   pull_request:
-    分支:
+    branches:
       - main
 
 concurrency:
