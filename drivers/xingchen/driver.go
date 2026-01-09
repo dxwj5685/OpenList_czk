@@ -72,12 +72,13 @@ func (d *XingChen) Link(_ context.Context, file model.Obj, _ model.LinkArgs) (*m
 }
 
 func (d *XingChen) MakeDir(_ context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
+	formData := map[string]string{"c_name": dirName}
+	if parentDir.GetID() != "" && parentDir.GetID() != "0" {
+		formData["c_fid"] = parentDir.GetID()
+	}
 	_, err := base.RestyClient.R().
 		SetQueryParam("authcode", d.AuthCode).
-		SetFormData(map[string]string{
-			"c_fid":  parentDir.GetID(),
-			"c_name": dirName,
-		}).
+		SetFormData(formData).
 		Post("https://api.1785677.xyz/opapi/addPath")
 	return nil, err
 }
@@ -85,7 +86,7 @@ func (d *XingChen) MakeDir(_ context.Context, parentDir model.Obj, dirName strin
 func (d *XingChen) Remove(_ context.Context, obj model.Obj) error {
 	_, err := base.RestyClient.R().
 		SetQueryParam("authcode", d.AuthCode).
-		SetFormData(map[string]string{"id": obj.GetID()}).
+		SetFormData(map[string]string{"id": "[" + obj.GetID() + "]"}).
 		Post("https://api.1785677.xyz/opapi/delPath")
 	return err
 }
@@ -102,13 +103,14 @@ func (d *XingChen) Rename(_ context.Context, srcObj model.Obj, newName string) (
 }
 
 func (d *XingChen) Move(_ context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
+	formData := map[string]string{"id": "[" + srcObj.GetID() + "]"}
+	if dstDir.GetID() != "" && dstDir.GetID() != "0" {
+		formData["fid"] = dstDir.GetID()
+	}
 	_, err := base.RestyClient.R().
 		SetQueryParam("authcode", d.AuthCode).
-		SetFormData(map[string]string{
-			"id":    srcObj.GetID(),
-			"c_fid": dstDir.GetID(),
-		}).
-		Post("https://api.1785677.xyz/opapi/movePath")
+		SetFormData(formData).
+		Post("https://api.1785677.xyz/opapi/transferPath")
 	return nil, err
 }
 
