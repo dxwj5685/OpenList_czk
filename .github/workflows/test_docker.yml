@@ -1,12 +1,12 @@
 name: Beta Release (Docker)
 
-on:
+于:
   workflow_dispatch:
   push:
-    branches:
+    分支:
       - main
   pull_request:
-    branches:
+    分支:
       - main
 
 concurrency:
@@ -15,7 +15,7 @@ concurrency:
 
 env:
   DOCKERHUB_ORG_NAME: ${{ vars.DOCKERHUB_ORG_NAME || 'dxwj' }}
-  GHCR_ORG_NAME: ${{ github.repository_owner' }}
+  GHCR_ORG_NAME: ${{ github.repository_owner }}
   IMAGE_NAME: openlist-git
   IMAGE_NAME_DOCKERHUB: openlist
   REGISTRY: ghcr.io
