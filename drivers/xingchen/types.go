@@ -1,6 +1,7 @@
 package xingchen
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -8,18 +9,18 @@ import (
 )
 
 type File struct {
-	ID       string `json:"id"`
-	FileName string `json:"file_name"`
-	Size     int64  `json:"size"`
-	IsDir_   int    `json:"is_dir"`
-	UpdateAt string `json:"update_at"`
+	ID    int    `json:"id"`
+	CName string `json:"c_name"`
+	CSize int64  `json:"c_size"`
+	CType string `json:"c_type"`
+	CTime string `json:"c_time"`
 }
 
-func (f *File) GetID() string           { return f.ID }
-func (f *File) GetName() string         { return f.FileName }
-func (f *File) GetSize() int64          { return f.Size }
-func (f *File) IsDir() bool             { return f.IsDir_ == 1 }
-func (f *File) ModTime() time.Time      { t, _ := time.Parse("2006-01-02 15:04:05", f.UpdateAt); return t }
+func (f *File) GetID() string           { return fmt.Sprintf("%d", f.ID) }
+func (f *File) GetName() string         { return f.CName }
+func (f *File) GetSize() int64          { return f.CSize }
+func (f *File) IsDir() bool             { return f.CType == "folder" }
+func (f *File) ModTime() time.Time      { t, _ := time.Parse("2006-01-02 15:04:05", f.CTime); return t }
 func (f *File) CreateTime() time.Time   { return f.ModTime() }
 func (f *File) GetPath() string         { return "" }
 func (f *File) GetHash() utils.HashInfo { return utils.HashInfo{} }
