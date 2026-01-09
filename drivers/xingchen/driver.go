@@ -24,7 +24,7 @@ func (d *XingChen) GetAddition() driver.Additional {
 	return &d.Addition
 }
 
-func (d *XingChen) Init(ctx context.Context) error {
+func (d *XingChen) Init(_ context.Context) error {
 	return d.getAuthCode()
 }
 
@@ -44,12 +44,12 @@ func (d *XingChen) getAuthCode() error {
 	return nil
 }
 
-func (d *XingChen) Drop(ctx context.Context) error {
+func (d *XingChen) Drop(_ context.Context) error {
 	return nil
 }
 
-func (d *XingChen) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
-	files, err := d.getFiles(ctx, dir.GetID())
+func (d *XingChen) List(_ context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
+	files, err := d.getFiles(dir.GetID())
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +58,7 @@ func (d *XingChen) List(ctx context.Context, dir model.Obj, args model.ListArgs)
 	})
 }
 
-func (d *XingChen) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
+func (d *XingChen) Link(_ context.Context, file model.Obj, _ model.LinkArgs) (*model.Link, error) {
 	var resp DownloadResp
 	_, err := base.RestyClient.R().
 		SetQueryParam("authcode", d.AuthCode).
@@ -71,7 +71,7 @@ func (d *XingChen) Link(ctx context.Context, file model.Obj, args model.LinkArgs
 	return &model.Link{URL: resp.Data.URL}, nil
 }
 
-func (d *XingChen) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
+func (d *XingChen) MakeDir(_ context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
 	_, err := base.RestyClient.R().
 		SetQueryParam("authcode", d.AuthCode).
 		SetFormData(map[string]string{
@@ -82,7 +82,7 @@ func (d *XingChen) MakeDir(ctx context.Context, parentDir model.Obj, dirName str
 	return nil, err
 }
 
-func (d *XingChen) Remove(ctx context.Context, obj model.Obj) error {
+func (d *XingChen) Remove(_ context.Context, obj model.Obj) error {
 	_, err := base.RestyClient.R().
 		SetQueryParam("authcode", d.AuthCode).
 		SetFormData(map[string]string{"id": obj.GetID()}).
@@ -90,7 +90,7 @@ func (d *XingChen) Remove(ctx context.Context, obj model.Obj) error {
 	return err
 }
 
-func (d *XingChen) Rename(ctx context.Context, srcObj model.Obj, newName string) (model.Obj, error) {
+func (d *XingChen) Rename(_ context.Context, srcObj model.Obj, newName string) (model.Obj, error) {
 	_, err := base.RestyClient.R().
 		SetQueryParam("authcode", d.AuthCode).
 		SetFormData(map[string]string{
@@ -101,7 +101,7 @@ func (d *XingChen) Rename(ctx context.Context, srcObj model.Obj, newName string)
 	return nil, err
 }
 
-func (d *XingChen) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
+func (d *XingChen) Move(_ context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
 	_, err := base.RestyClient.R().
 		SetQueryParam("authcode", d.AuthCode).
 		SetFormData(map[string]string{
@@ -112,7 +112,7 @@ func (d *XingChen) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Ob
 	return nil, err
 }
 
-func (d *XingChen) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
+func (d *XingChen) Put(_ context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
 	const chunkSize int64 = 100 * 1024 * 1024 // 100MB per chunk
 	fileSize := stream.GetSize()
 
@@ -159,7 +159,7 @@ func (d *XingChen) Put(ctx context.Context, dstDir model.Obj, stream model.FileS
 
 		// 跳过已上传的分片
 		if uploadedSet[i] {
-			stream.Read(make([]byte, chunkLen)) // 跳过数据
+			io.CopyN(io.Discard, stream, chunkLen)
 			up(float64(i+1) / float64(totalChunks) * 100)
 			continue
 		}
@@ -183,7 +183,7 @@ func (d *XingChen) Put(ctx context.Context, dstDir model.Obj, stream model.FileS
 	return nil, err
 }
 
-func (d *XingChen) getFiles(ctx context.Context, parentID string) ([]File, error) {
+func (d *XingChen) getFiles(parentID string) ([]File, error) {
 	var resp FileListResp
 	params := map[string]string{
 		"authcode":  d.AuthCode,
