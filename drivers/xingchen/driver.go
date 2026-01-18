@@ -130,7 +130,8 @@ func (d *XingChen) Put(_ context.Context, dstDir model.Obj, stream model.FileStr
 		if err != nil {
 			return nil, err
 		}
-		_, err = base.RestyClient.R().SetFileReader("file", stream.GetName(), io.NopCloser(stream)).Post(uploadResp.Data)
+		uploadURL := uploadResp.Data.URL + "?" + uploadResp.Data.Query
+		_, err = base.RestyClient.R().SetFileReader("file", stream.GetName(), io.NopCloser(stream)).Post(uploadURL)
 		return nil, err
 	}
 
@@ -141,11 +142,13 @@ func (d *XingChen) Put(_ context.Context, dstDir model.Obj, stream model.FileStr
 		return nil, err
 	}
 
+	uploadURL := uploadResp.Data.URL + "?" + uploadResp.Data.Query
+
 	// 获取已上传分片（断点续传）
 	var uploadedResp struct {
 		Data []int `json:"data"`
 	}
-	base.RestyClient.R().SetQueryParam("query", uploadResp.Data).SetResult(&uploadedResp).Get("https://api.1785677.xyz/uploadedChunks")
+	base.RestyClient.R().SetQueryParam("query", uploadResp.Data.Query).SetResult(&uploadedResp).Get("https://api.1785677.xyz/uploadedChunks")
 	uploadedSet := make(map[int]bool)
 	for _, c := range uploadedResp.Data {
 		uploadedSet[c] = true
@@ -173,7 +176,7 @@ func (d *XingChen) Put(_ context.Context, dstDir model.Obj, stream model.FileStr
 				"chunk":  fmt.Sprintf("%d", i),
 				"chunks": fmt.Sprintf("%d", totalChunks),
 			}).
-			Post(uploadResp.Data)
+			Post(uploadURL)
 		if err != nil {
 			return nil, err
 		}
@@ -181,7 +184,7 @@ func (d *XingChen) Put(_ context.Context, dstDir model.Obj, stream model.FileStr
 	}
 
 	// 合并分片
-	_, err = base.RestyClient.R().SetQueryParam("query", uploadResp.Data).Post("https://api.1785677.xyz/mergeChunks")
+	_, err = base.RestyClient.R().SetQueryParam("query", uploadResp.Data.Query).Post("https://api.1785677.xyz/mergeChunks")
 	return nil, err
 }
 

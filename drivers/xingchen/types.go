@@ -40,6 +40,9 @@ type DownloadResp struct {
 }
 
 type UploadResp struct {
-	Code int    `json:"code"`
-	Data string `json:"data"`
+	Code int `json:"code"`
+	Data struct {
+		URL   string `json:"url"`
+		Query string `json:"query"`
+	} `json:"data"`
 }
