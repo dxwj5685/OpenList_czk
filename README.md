@@ -1,5 +1,5 @@
 使用AI为openlist添加星辰云盘存储（CZK）。docker命令：docker run -d \
-  --name openlist-czk \
+  --name openlist-xingchen \
   --user 0:0 \
   -v /etc/openlist-xingchen:/opt/openlist/data \
   -p 5244:5244 \
@@ -12,7 +12,7 @@ docker-compose：
 services:
   openlist:
     image: 'dxwj/openlist:latest'
-    container_name: openlist-czk
+    container_name: openlist-xingchen
     user: '0:0' # Please replace `0:0` with the actual user ID and group ID you want to use to run OpenList.
     volumes:
       - '/etc/openlist-xingchen:/opt/openlist/data'
