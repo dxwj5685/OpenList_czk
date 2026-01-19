@@ -133,7 +133,7 @@ func (d *XingChen) Put(_ context.Context, dstDir model.Obj, stream model.FileStr
 		if err != nil {
 			return nil, err
 		}
-		uploadURL := uploadResp.Data.URL + "?" + uploadResp.Data.Query
+		uploadURL := uploadResp.Data.URL + "/upload?" + uploadResp.Data.Query
 		_, err = base.RestyClient.R().SetFileReader("file", stream.GetName(), io.NopCloser(stream)).Post(uploadURL)
 		return nil, err
 	}
@@ -145,7 +145,7 @@ func (d *XingChen) Put(_ context.Context, dstDir model.Obj, stream model.FileStr
 		return nil, err
 	}
 
-	uploadURL := uploadResp.Data.URL + "?" + uploadResp.Data.Query
+	uploadURL := uploadResp.Data.URL + "/upload?" + uploadResp.Data.Query
 
 	// 获取已上传分片（断点续传）
 	var uploadedResp struct {
