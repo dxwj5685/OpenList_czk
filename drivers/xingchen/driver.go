@@ -145,7 +145,7 @@ func (d *XingChen) Put(_ context.Context, dstDir model.Obj, stream model.FileStr
 		return nil, err
 	}
 
-	uploadURL := uploadResp.Data.URL + "/upload?" + uploadResp.Data.Query
+	uploadURL := uploadResp.Data.URL + "/uploadChunk?" + uploadResp.Data.Query
 
 	// 获取已上传分片（断点续传）
 	var uploadedResp struct {
