@@ -62,13 +62,16 @@ func (d *XingChen) Link(_ context.Context, file model.Obj, _ model.LinkArgs) (*m
 	var resp DownloadResp
 	_, err := base.RestyClient.R().
 		SetQueryParam("authcode", d.AuthCode).
-		SetFormData(map[string]string{"id": file.GetID()}).
+		SetFormData(map[string]string{"id": "[" + file.GetID() + "]"}).
 		SetResult(&resp).
 		Post("https://api.1785677.xyz/opapi/downAllPath")
 	if err != nil {
 		return nil, err
 	}
-	return &model.Link{URL: resp.Data.URL}, nil
+	if len(resp.Data) == 0 {
+		return nil, fmt.Errorf("no download url returned")
+	}
+	return &model.Link{URL: resp.Data[0].URL}, nil
 }
 
 func (d *XingChen) MakeDir(_ context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {

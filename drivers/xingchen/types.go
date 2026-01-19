@@ -34,8 +34,9 @@ type FileListResp struct {
 
 type DownloadResp struct {
 	Code int `json:"code"`
-	Data struct {
-		URL string `json:"url"`
+	Data []struct {
+		URL  string `json:"url"`
+		Name string `json:"name"`
 	} `json:"data"`
 }
 
