@@ -31,6 +31,7 @@ func (d *XingChen) Init(_ context.Context) error {
 func (d *XingChen) getAuthCode() error {
 	var resp struct {
 		Code int    `json:"code"`
+		Msg  string `json:"msg"`
 		Data string `json:"data"`
 	}
 	_, err := base.RestyClient.R().
@@ -39,6 +40,9 @@ func (d *XingChen) getAuthCode() error {
 		Get("https://api.1785677.xyz/opapi/GetAuthCode")
 	if err != nil {
 		return err
+	}
+	if resp.Code != 200 {
+		return fmt.Errorf("获取AuthCode失败: %s", resp.Msg)
 	}
 	d.AuthCode = resp.Data
 	return nil
