@@ -151,7 +151,8 @@ func (d *XingChen) Put(_ context.Context, dstDir model.Obj, stream model.FileStr
 	var uploadedResp struct {
 		Data []int `json:"data"`
 	}
-	base.RestyClient.R().SetQueryParam("query", uploadResp.Data.Query).SetResult(&uploadedResp).Get("https://api.1785677.xyz/uploadedChunks")
+	uploadedChunksURL := uploadResp.Data.URL + "/uploadedChunks?" + uploadResp.Data.Query
+	base.RestyClient.R().SetResult(&uploadedResp).Get(uploadedChunksURL)
 	uploadedSet := make(map[int]bool)
 	for _, c := range uploadedResp.Data {
 		uploadedSet[c] = true
@@ -187,7 +188,8 @@ func (d *XingChen) Put(_ context.Context, dstDir model.Obj, stream model.FileStr
 	}
 
 	// 合并分片
-	_, err = base.RestyClient.R().SetQueryParam("query", uploadResp.Data.Query).Post("https://api.1785677.xyz/mergeChunks")
+	mergeURL := uploadResp.Data.URL + "/mergeChunks?" + uploadResp.Data.Query
+	_, err = base.RestyClient.R().Post(mergeURL)
 	return nil, err
 }
 
