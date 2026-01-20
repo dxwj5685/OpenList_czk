@@ -30,9 +30,9 @@ func (d *XingChen) Init(_ context.Context) error {
 
 func (d *XingChen) getAuthCode() error {
 	var resp struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-		Data string `json:"data"`
+		Code int         `json:"code"`
+		Msg  string      `json:"msg"`
+		Data interface{} `json:"data"`
 	}
 	_, err := base.RestyClient.R().
 		SetQueryParams(map[string]string{"aid": d.AID, "key": d.Key}).
@@ -42,9 +42,13 @@ func (d *XingChen) getAuthCode() error {
 		return err
 	}
 	if resp.Code != 200 {
-		return fmt.Errorf("获取AuthCode失败: %s", resp.Msg)
+		return fmt.Errorf("%s", resp.Msg)
 	}
-	d.AuthCode = resp.Data
+	if authCode, ok := resp.Data.(string); ok {
+		d.AuthCode = authCode
+	} else {
+		return fmt.Errorf("获取AuthCode失败: 返回数据格式错误")
+	}
 	return nil
 }
 
