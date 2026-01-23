@@ -1,4 +1,5 @@
-使用AI为openlist添加星辰云盘存储（CZK）。docker命令：docker run -d \
+使用AI为openlist添加星辰云盘存储。docker命令：
+docker run -d \
   --name openlist-xingchen \
   --user 0:0 \
   -v /etc/openlist-xingchen:/opt/openlist/data \
