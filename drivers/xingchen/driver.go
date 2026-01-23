@@ -76,13 +76,17 @@ func (d *XingChen) Link(_ context.Context, file model.Obj, _ model.LinkArgs) (*m
 	if err != nil {
 		return nil, err
 	}
+	if resp.Code != 200 {
+		return nil, fmt.Errorf("%s", resp.Msg)
+	}
 	if len(resp.Data) == 0 {
-		return nil, fmt.Errorf("no download url returned")
+		return nil, fmt.Errorf("未返回下载地址")
 	}
 	return &model.Link{URL: resp.Data[0].URL}, nil
 }
 
 func (d *XingChen) MakeDir(_ context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
+	var resp BaseResp
 	formData := map[string]string{"c_name": dirName}
 	if parentDir.GetID() != "" && parentDir.GetID() != "0" {
 		formData["c_fid"] = parentDir.GetID()
@@ -90,30 +94,54 @@ func (d *XingChen) MakeDir(_ context.Context, parentDir model.Obj, dirName strin
 	_, err := base.RestyClient.R().
 		SetQueryParam("authcode", d.AuthCode).
 		SetFormData(formData).
+		SetResult(&resp).
 		Post("https://api.1785677.xyz/opapi/addPath")
-	return nil, err
+	if err != nil {
+		return nil, err
+	}
+	if resp.Code != 200 {
+		return nil, fmt.Errorf("%s", resp.Msg)
+	}
+	return nil, nil
 }
 
 func (d *XingChen) Remove(_ context.Context, obj model.Obj) error {
+	var resp BaseResp
 	_, err := base.RestyClient.R().
 		SetQueryParam("authcode", d.AuthCode).
 		SetFormData(map[string]string{"id": "[" + obj.GetID() + "]"}).
+		SetResult(&resp).
 		Post("https://api.1785677.xyz/opapi/delPath")
-	return err
+	if err != nil {
+		return err
+	}
+	if resp.Code != 200 {
+		return fmt.Errorf("%s", resp.Msg)
+	}
+	return nil
 }
 
 func (d *XingChen) Rename(_ context.Context, srcObj model.Obj, newName string) (model.Obj, error) {
+	var resp BaseResp
 	_, err := base.RestyClient.R().
 		SetQueryParam("authcode", d.AuthCode).
 		SetFormData(map[string]string{
 			"id":     srcObj.GetID(),
 			"c_name": newName,
 		}).
+		SetResult(&resp).
 		Post("https://api.1785677.xyz/opapi/editPath")
-	return nil, err
+	if err != nil {
+		return nil, err
+	}
+	if resp.Code != 200 {
+		return nil, fmt.Errorf("%s", resp.Msg)
+	}
+	return nil, nil
 }
 
 func (d *XingChen) Move(_ context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
+	var resp BaseResp
 	formData := map[string]string{"id": "[" + srcObj.GetID() + "]"}
 	if dstDir.GetID() != "" && dstDir.GetID() != "0" {
 		formData["fid"] = dstDir.GetID()
@@ -121,45 +149,57 @@ func (d *XingChen) Move(_ context.Context, srcObj, dstDir model.Obj) (model.Obj,
 	_, err := base.RestyClient.R().
 		SetQueryParam("authcode", d.AuthCode).
 		SetFormData(formData).
+		SetResult(&resp).
 		Post("https://api.1785677.xyz/opapi/transferPath")
-	return nil, err
+	if err != nil {
+		return nil, err
+	}
+	if resp.Code != 200 {
+		return nil, fmt.Errorf("%s", resp.Msg)
+	}
+	return nil, nil
 }
 
 func (d *XingChen) Put(_ context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
 	const chunkSize int64 = 100 * 1024 * 1024 // 100MB per chunk
 	fileSize := stream.GetSize()
+	fileName := stream.GetName()
 
 	params := map[string]string{"authcode": d.AuthCode}
 	if dstDir.GetID() != "" && dstDir.GetID() != "0" {
 		params["fid"] = dstDir.GetID()
 	}
 
-	// 小于1G使用普通上传
-	if fileSize <= 1024*1024*1024 {
-		var uploadResp UploadResp
-		_, err := base.RestyClient.R().SetQueryParams(params).SetResult(&uploadResp).Get("https://api.1785677.xyz/opapi/Getuploads")
-		if err != nil {
-			return nil, err
-		}
-		uploadURL := uploadResp.Data.URL + "/upload?" + uploadResp.Data.Query
-		_, err = base.RestyClient.R().SetFileReader("file", stream.GetName(), io.NopCloser(stream)).Post(uploadURL)
-		return nil, err
-	}
-
-	// 大于1G使用分片上传
+	// 获取上传地址
 	var uploadResp UploadResp
 	_, err := base.RestyClient.R().SetQueryParams(params).SetResult(&uploadResp).Get("https://api.1785677.xyz/opapi/Getuploads")
 	if err != nil {
 		return nil, err
 	}
+	if uploadResp.Code != 200 {
+		return nil, fmt.Errorf("获取上传地址失败: %s", uploadResp.Msg)
+	}
+	if uploadResp.Data.URL == "" {
+		return nil, fmt.Errorf("上传节点似乎离线，请稍后重试")
+	}
 
-	uploadURL := uploadResp.Data.URL + "/uploadChunk?" + uploadResp.Data.Query
+	// 小于1G使用普通上传
+	if fileSize <= 1024*1024*1024 {
+		uploadURL := uploadResp.Data.URL + "/upload?" + uploadResp.Data.Query
+		_, err = base.RestyClient.R().SetFileReader("file", fileName, io.NopCloser(stream)).Post(uploadURL)
+		return nil, err
+	}
+
+	// 大于1G使用分片上传
+	// 生成文件hash（使用文件名+大小+时间戳作为唯一标识）
+	fileHash := fmt.Sprintf("%x", fmt.Sprintf("%s_%d_%d", fileName, fileSize, stream.ModTime().Unix()))
+	totalChunks := int((fileSize + chunkSize - 1) / chunkSize)
 
 	// 获取已上传分片（断点续传）
 	var uploadedResp struct {
 		Data []int `json:"data"`
 	}
-	uploadedChunksURL := uploadResp.Data.URL + "/uploadedChunks?" + uploadResp.Data.Query
+	uploadedChunksURL := fmt.Sprintf("%s/uploadedChunks?%s&hash=%s", uploadResp.Data.URL, uploadResp.Data.Query, fileHash)
 	base.RestyClient.R().SetResult(&uploadedResp).Get(uploadedChunksURL)
 	uploadedSet := make(map[int]bool)
 	for _, c := range uploadedResp.Data {
@@ -167,7 +207,6 @@ func (d *XingChen) Put(_ context.Context, dstDir model.Obj, stream model.FileStr
 	}
 
 	// 分片上传
-	totalChunks := int((fileSize + chunkSize - 1) / chunkSize)
 	for i := 0; i < totalChunks; i++ {
 		chunkLen := chunkSize
 		if int64(i)*chunkSize+chunkLen > fileSize {
@@ -182,22 +221,27 @@ func (d *XingChen) Put(_ context.Context, dstDir model.Obj, stream model.FileStr
 		}
 
 		chunk := io.LimitReader(stream, chunkLen)
+		// URL参数：hash, index, totalChunks, filename
+		chunkURL := fmt.Sprintf("%s/uploadChunk?%s&hash=%s&index=%d&totalChunks=%d&filename=%s",
+			uploadResp.Data.URL, uploadResp.Data.Query, fileHash, i, totalChunks, fileName)
 		_, err = base.RestyClient.R().
-			SetFileReader("file", stream.GetName(), io.NopCloser(chunk)).
-			SetFormData(map[string]string{
-				"chunk":  fmt.Sprintf("%d", i),
-				"chunks": fmt.Sprintf("%d", totalChunks),
-			}).
-			Post(uploadURL)
+			SetFileReader("file", fileName, io.NopCloser(chunk)).
+			Post(chunkURL)
 		if err != nil {
 			return nil, err
 		}
 		up(float64(i+1) / float64(totalChunks) * 100)
 	}
 
-	// 合并分片
-	mergeURL := uploadResp.Data.URL + "/mergeChunks?" + uploadResp.Data.Query
-	_, err = base.RestyClient.R().Post(mergeURL)
+	// 合并分片 - body参数：filename, hash, totalChunks
+	mergeURL := fmt.Sprintf("%s/mergeChunks?%s", uploadResp.Data.URL, uploadResp.Data.Query)
+	_, err = base.RestyClient.R().
+		SetFormData(map[string]string{
+			"filename":    fileName,
+			"hash":        fileHash,
+			"totalChunks": fmt.Sprintf("%d", totalChunks),
+		}).
+		Post(mergeURL)
 	return nil, err
 }
 
@@ -216,6 +260,9 @@ func (d *XingChen) getFiles(parentID string) ([]File, error) {
 		Get("https://api.1785677.xyz/opapi/getFileList")
 	if err != nil {
 		return nil, err
+	}
+	if resp.Code != 200 {
+		return nil, fmt.Errorf("%s", resp.Msg)
 	}
 	return resp.Data, nil
 }

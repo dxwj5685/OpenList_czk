@@ -27,13 +27,20 @@ func (f *File) GetHash() utils.HashInfo { return utils.HashInfo{} }
 
 var _ model.Obj = (*File)(nil)
 
+type BaseResp struct {
+	Code int    `json:"code"`
+	Msg  string `json:"msg"`
+}
+
 type FileListResp struct {
 	Code int    `json:"code"`
+	Msg  string `json:"msg"`
 	Data []File `json:"data"`
 }
 
 type DownloadResp struct {
-	Code int `json:"code"`
+	Code int    `json:"code"`
+	Msg  string `json:"msg"`
 	Data []struct {
 		URL  string `json:"url"`
 		Name string `json:"name"`
@@ -41,7 +48,8 @@ type DownloadResp struct {
 }
 
 type UploadResp struct {
-	Code int `json:"code"`
+	Code int    `json:"code"`
+	Msg  string `json:"msg"`
 	Data struct {
 		URL   string `json:"url"`
 		Query string `json:"query"`
