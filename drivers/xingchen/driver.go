@@ -191,8 +191,18 @@ func (d *XingChen) Put(_ context.Context, dstDir model.Obj, stream model.FileStr
 	}
 
 	// 大于1G使用分片上传
-	// 生成文件hash（使用文件名+大小+时间戳作为唯一标识）
-	fileHash := fmt.Sprintf("%x", fmt.Sprintf("%s_%d_%d", fileName, fileSize, stream.ModTime().Unix()))
+	// 计算文件hash（前10MB的MD5）
+	hashSize := int64(10 * 1024 * 1024) // 10MB
+	if hashSize > fileSize {
+		hashSize = fileSize
+	}
+	hashData := make([]byte, hashSize)
+	n, err := io.ReadFull(stream, hashData)
+	if err != nil && err != io.ErrUnexpectedEOF {
+		return nil, fmt.Errorf("读取文件计算hash失败: %v", err)
+	}
+	hashData = hashData[:n]
+	fileHash := utils.HashData(utils.MD5, hashData)
 	totalChunks := int((fileSize + chunkSize - 1) / chunkSize)
 
 	// 获取已上传分片（断点续传）
