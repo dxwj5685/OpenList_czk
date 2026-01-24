@@ -196,10 +196,11 @@ func (d *XingChen) Put(_ context.Context, dstDir model.Obj, stream model.FileStr
 	totalChunks := int((fileSize + chunkSize - 1) / chunkSize)
 
 	// 获取已上传分片（断点续传）
+	// URL格式: url/uploadedChunks?hash=xxx&[query]
 	var uploadedResp struct {
 		Data []int `json:"data"`
 	}
-	uploadedChunksURL := fmt.Sprintf("%s/uploadedChunks?%s&hash=%s", uploadResp.Data.URL, uploadResp.Data.Query, fileHash)
+	uploadedChunksURL := fmt.Sprintf("%s/uploadedChunks?hash=%s&%s", uploadResp.Data.URL, fileHash, uploadResp.Data.Query)
 	base.RestyClient.R().SetResult(&uploadedResp).Get(uploadedChunksURL)
 	uploadedSet := make(map[int]bool)
 	for _, c := range uploadedResp.Data {
@@ -221,28 +222,43 @@ func (d *XingChen) Put(_ context.Context, dstDir model.Obj, stream model.FileStr
 		}
 
 		chunk := io.LimitReader(stream, chunkLen)
-		// URL参数：hash, index, totalChunks, filename
-		chunkURL := fmt.Sprintf("%s/uploadChunk?%s&hash=%s&index=%d&totalChunks=%d&filename=%s",
-			uploadResp.Data.URL, uploadResp.Data.Query, fileHash, i, totalChunks, fileName)
+		// URL格式: url/uploadChunk?hash=xxx&[query]&index=0&totalChunks=10&filename=xxx
+		chunkURL := fmt.Sprintf("%s/uploadChunk?hash=%s&%s&index=%d&totalChunks=%d&filename=%s",
+			uploadResp.Data.URL, fileHash, uploadResp.Data.Query, i, totalChunks, fileName)
+		var chunkResp BaseResp
 		_, err = base.RestyClient.R().
 			SetFileReader("file", fileName, io.NopCloser(chunk)).
+			SetResult(&chunkResp).
 			Post(chunkURL)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("分片%d上传失败: %v", i, err)
+		}
+		if chunkResp.Code != 0 && chunkResp.Code != 200 {
+			return nil, fmt.Errorf("分片%d上传失败: %s", i, chunkResp.Msg)
 		}
 		up(float64(i+1) / float64(totalChunks) * 100)
 	}
 
-	// 合并分片 - body参数：filename, hash, totalChunks
+	// 合并分片
+	// URL格式: url/mergeChunks?[query]
+	// body参数：filename, hash, totalChunks
 	mergeURL := fmt.Sprintf("%s/mergeChunks?%s", uploadResp.Data.URL, uploadResp.Data.Query)
+	var mergeResp BaseResp
 	_, err = base.RestyClient.R().
 		SetFormData(map[string]string{
 			"filename":    fileName,
 			"hash":        fileHash,
 			"totalChunks": fmt.Sprintf("%d", totalChunks),
 		}).
+		SetResult(&mergeResp).
 		Post(mergeURL)
-	return nil, err
+	if err != nil {
+		return nil, fmt.Errorf("合并分片失败: %v", err)
+	}
+	if mergeResp.Code != 0 && mergeResp.Code != 200 {
+		return nil, fmt.Errorf("合并分片失败: %s", mergeResp.Msg)
+	}
+	return nil, nil
 }
 
 func (d *XingChen) getFiles(parentID string) ([]File, error) {
