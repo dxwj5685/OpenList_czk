@@ -4,16 +4,28 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/go-resty/resty/v2"
 )
 
 // 用于大文件上传的客户端，超时时间更长
-var uploadClient = base.NewRestyClient().SetTimeout(30 * time.Minute)
+var (
+	uploadClient     *resty.Client
+	uploadClientOnce sync.Once
+)
+
+func getUploadClient() *resty.Client {
+	uploadClientOnce.Do(func() {
+		uploadClient = base.NewRestyClient().SetTimeout(30 * time.Minute)
+	})
+	return uploadClient
+}
 
 type XingChen struct {
 	model.Storage
@@ -190,7 +202,7 @@ func (d *XingChen) Put(_ context.Context, dstDir model.Obj, stream model.FileStr
 	// 小于1G使用普通上传（分片上传使用长超时客户端）
 	if fileSize <= 1024*1024*1024 {
 		uploadURL := uploadResp.Data.URL + "/upload?" + uploadResp.Data.Query
-		_, err = uploadClient.R().SetFileReader("file", fileName, io.NopCloser(stream)).Post(uploadURL)
+		_, err = getUploadClient().R().SetFileReader("file", fileName, io.NopCloser(stream)).Post(uploadURL)
 		return nil, err
 	}
 
@@ -240,7 +252,7 @@ func (d *XingChen) Put(_ context.Context, dstDir model.Obj, stream model.FileStr
 		chunkURL := fmt.Sprintf("%s/uploadChunk?hash=%s&%s&index=%d&totalChunks=%d&filename=%s",
 			uploadResp.Data.URL, fileHash, uploadResp.Data.Query, i, totalChunks, fileName)
 		var chunkResp BaseResp
-		_, err = uploadClient.R().
+		_, err = getUploadClient().R().
 			SetFileReader("file", fileName, io.NopCloser(chunk)).
 			SetResult(&chunkResp).
 			Post(chunkURL)
